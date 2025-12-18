@@ -4,7 +4,8 @@ import com.bms.backend.entity.BatteryData;
 import com.influxdb.client.InfluxDBClient;
 import com.influxdb.client.WriteApiBlocking;
 import com.influxdb.client.domain.WritePrecision;
-// 1. 引入标准的日志包
+
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,11 +13,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
-// @Slf4j  <-- 删掉这个
+@Slf4j
 public class InfluxDbService {
 
     // 2. 手动创建日志对象 (这一行代替了 @Slf4j)
-    private static final Logger log = LoggerFactory.getLogger(InfluxDbService.class);
+    // private static final Logger log = LoggerFactory.getLogger(InfluxDbService.class);
 
     @Autowired
     private InfluxDBClient influxDBClient;
