@@ -14,34 +14,36 @@ public class SimulationController {
     @Autowired
     private DataSimulationService simulationService;
 
-    // 启动模拟
-    // POST http://localhost:8080/api/simulation/start
+    // 启动双通道模拟
+    // GET http://localhost:8080/api/simulation/start
     @GetMapping("/start")
     public String start() {
-        // 1. 获取当前项目的根目录
         String projectRoot = System.getProperty("user.dir");
 
-        // 2. 拼接特定的子目录路径: data/XJTU/charge/batch1_b1c0.csv
-        // Paths.get 自动处理 Windows的反斜杠(\)
-        String csvPath = Paths.get(projectRoot, "data", "XJTU", "charge", "batch1_b1c0.csv").toString();
+        // --- 准备通道 A (b1c0) ---
+        String pathA = Paths.get(projectRoot, "data", "XJTU", "charge", "batch1_b1c0.csv").toString();
 
-        // 3. 检查文件是否存在（防止报错）
-        File file = new File(csvPath);
-        if (!file.exists()) {
-            System.err.println("文件未找到: " + csvPath);
-            return "❌ 启动失败：找不到文件！\n请确认文件位于: " + csvPath;
+        // --- 准备通道 B (b1c1) ---
+        //
+        String pathB = Paths.get(projectRoot, "data", "XJTU", "charge", "batch1_b1c1.csv").toString();
+
+        // 简单检查文件是否存在
+        if (!new File(pathA).exists() || !new File(pathB).exists()) {
+            return "❌ 启动失败：找不到文件！请检查 data/XJTU/charge/ 目录下是否有 b1c0 和 b1c1 文件。";
         }
 
-        // 4. 启动服务
-        simulationService.startSimulation(csvPath);
-        return "🚀 模拟器已启动！\n正在读取文件: " + csvPath;
+        // --- 并发启动 ---
+        simulationService.startSimulation(pathA, "b1c0");
+        simulationService.startSimulation(pathB, "b1c1");
+
+        return "🚀 双通道模拟已启动！\n" +
+                "🔋 通道A: 读取 batch1_b1c0.csv -> 写入 ID: b1c0\n" +
+                "🔋 通道B: 读取 batch1_b1c1.csv -> 写入 ID: b1c1";
     }
 
-    // 停止模拟
-    // POST http://localhost:8080/api/simulation/stop
     @GetMapping("/stop")
     public String stop() {
         simulationService.stopSimulation();
-        return "🛑 模拟器停止指令已发送。";
+        return "🛑 已发送停止指令，所有通道将停止。";
     }
 }
