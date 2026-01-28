@@ -20,10 +20,10 @@ public class SimulationController {
     public String start() {
         String projectRoot = System.getProperty("user.dir");
 
-        // --- 准备通道 A (b1c0) ---
+        // 准备通道 A (b1c0)
         String pathA = Paths.get(projectRoot, "data", "XJTU", "charge", "batch1_b1c0.csv").toString();
 
-        // --- 准备通道 B (b1c1) ---
+        // 准备通道 B (b1c1)
         //
         String pathB = Paths.get(projectRoot, "data", "XJTU", "charge", "batch1_b1c1.csv").toString();
 
