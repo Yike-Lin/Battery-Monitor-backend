@@ -14,30 +14,33 @@ import java.time.OffsetDateTime;
 @Builder
 public class Customer {
 
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    //  客户名称
     @Column(nullable = false , unique = true , length = 128)
     private String name;
 
+    // 备注
     @Column
     private String remark;
 
+    // 创建时间
     @Column(name = "created_at" , nullable = false , columnDefinition = "TIMESTAMPTZ")
     private OffsetDateTime createdAt;
 
+    // 最后更新时间
     @Column(name = "updated_at" , nullable = false , columnDefinition = "TIMESTAMPTZ")
     private OffsetDateTime updatedAt;
 
+    // 生命周期回调方法
     @PrePersist
     public void prePersist() {
         OffsetDateTime now = OffsetDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
     }
-
     @PreUpdate
     public void preUpdate() {
         this.updatedAt = OffsetDateTime.now();

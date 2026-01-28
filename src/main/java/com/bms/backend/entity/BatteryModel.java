@@ -18,6 +18,7 @@ public class BatteryModel {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // 电池型号
     @Column(name = "model_code" , nullable = false , unique = true , length = 128)
     private String modelCode;
 
