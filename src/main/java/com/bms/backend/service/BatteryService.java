@@ -1,14 +1,18 @@
 package com.bms.backend.service;
 
+import com.bms.backend.dto.BatteryCreateRequest;
 import com.bms.backend.dto.BatteryListItemDto;
 import com.bms.backend.dto.BatteryListQuery;
 import com.bms.backend.entity.Battery;
+import com.bms.backend.entity.BatteryModel;
+import com.bms.backend.entity.Customer;
 import com.bms.backend.repository.BatteryModelRepository;
 import com.bms.backend.repository.BatteryRepository;
 import com.bms.backend.repository.CustomerRepository;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -109,6 +113,52 @@ public class BatteryService {
             dto.setCustomerName(battery.getCustomer().getName());
         }
         return dto;
+    }
+
+
+    /**
+     * 新增入库
+     * @param request
+     * @return
+     */
+    @Transactional
+    public BatteryListItemDto createBattery(BatteryCreateRequest request){
+        // 1. 处理型号:先查一下，没有就新建
+        BatteryModel model = batteryModelRepository.findByModelCode(request.getModelCode());
+        if (model == null) {
+            model = BatteryModel.builder()
+                    .modelCode(request.getModelCode())
+                    .build();
+            model = batteryModelRepository.save(model);
+        }
+
+        // 2. 处理客户
+        Customer customer = null;
+        if (request.getCustomerName() != null && !request.getCustomerName().isEmpty()) {
+            customer = customerRepository.findByName(request.getCustomerName());
+            if (customer == null){
+                customer = Customer.builder()
+                        .name(request.getCustomerName())
+                        .build();
+                customer = customerRepository.save(customer);
+            }
+        }
+
+        // 3. 创建Battery实体
+        Battery battery = Battery.builder()
+                .batteryCode(request.getBatteryCode())
+                .model(model)
+                .customer(customer)
+                .status(request.getStatus() != null ? request.getStatus() : 1)
+                .commissioningDate(request.getCommissioningDate())
+                .ratedCapacityAh(request.getRatedCapacityAh())
+                .sohPercent(request.getSohPercent())
+                .cycleCount(request.getCycleCount())
+                .lastRecordAt(request.getLastRecordAt())
+                .build();
+
+        battery = batteryRepository.save(battery);
+        return toListItemDto(battery);
     }
 
 
