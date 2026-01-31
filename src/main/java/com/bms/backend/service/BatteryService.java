@@ -14,6 +14,10 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -148,6 +152,12 @@ public class BatteryService {
             }
         }
 
+        OffsetDateTime lastRecordAt = null;
+        if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
+            // 直接用 OffsetDateTime 自带的解析（支持 2026-01-31T22:35:14.857+08:00）
+            lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
+        }
+
         // 3. 创建Battery实体
         Battery battery = Battery.builder()
                 .batteryCode(request.getBatteryCode())
@@ -158,7 +168,7 @@ public class BatteryService {
                 .ratedCapacityAh(request.getRatedCapacityAh())
                 .sohPercent(request.getSohPercent())
                 .cycleCount(request.getCycleCount())
-                .lastRecordAt(request.getLastRecordAt())
+                .lastRecordAt(lastRecordAt)
                 .deleted(false)
                 .build();
 

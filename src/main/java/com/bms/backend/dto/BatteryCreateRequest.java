@@ -20,7 +20,7 @@ public class BatteryCreateRequest {
     private BigDecimal ratedCapacityAh;
     private BigDecimal sohPercent;
     private Integer cycleCount;
-    private OffsetDateTime lastRecordAt;
+    private String lastRecordAt;
 
     // 对应上传CSV时产生的一个token
     private String uploadToken;
