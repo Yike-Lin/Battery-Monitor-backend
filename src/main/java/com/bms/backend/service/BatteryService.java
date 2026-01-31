@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.persistence.criteria.Predicate;
@@ -67,6 +68,9 @@ public class BatteryService {
             if (query.getCommissioningDateEnd() != null) {
                 predicates.add(cb.lessThanOrEqualTo(root.get("commissioningDate") , query.getCommissioningDateEnd()));
             }
+            // 只查未删除的数据
+            predicates.add(cb.isFalse(root.get("deleted")));
+
             return cb.and(predicates.toArray(new Predicate[0]));
         };
 
@@ -155,10 +159,28 @@ public class BatteryService {
                 .sohPercent(request.getSohPercent())
                 .cycleCount(request.getCycleCount())
                 .lastRecordAt(request.getLastRecordAt())
+                .deleted(false)
                 .build();
 
         battery = batteryRepository.save(battery);
         return toListItemDto(battery);
+    }
+
+    /**
+     * 逻辑删除：标记 deleted = true
+     * @param id
+     */
+    @Transactional
+    public void deleteBattery(Long id) {
+        Battery battery = batteryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("电池不存在：id = " + id));
+        // 已经删除，直接返回
+        if (Boolean.TRUE.equals(battery.getDeleted())) {
+            return;
+        }
+        battery.setDeleted(true);
+        batteryRepository.save(battery);
+
     }
 
 

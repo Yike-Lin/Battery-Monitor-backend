@@ -8,6 +8,7 @@ import com.bms.backend.dto.BatteryListQuery;
 import com.bms.backend.service.BatteryCsvService;
 import com.bms.backend.service.BatteryService;
 import org.springframework.data.domain.Page;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -57,6 +58,22 @@ public class BatteryController {
     @PostMapping
     public BatteryListItemDto create(@RequestBody BatteryCreateRequest request) {
         return batteryService.createBattery(request);
+    }
+
+
+    /**
+     * 删除
+     * @param id
+     * @return
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteBattery(@PathVariable Long id) {
+        try {
+            batteryService.deleteBattery(id);
+            return ResponseEntity.noContent().build();  // 204无内容
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();   // 404未找到
+        }
     }
 
 

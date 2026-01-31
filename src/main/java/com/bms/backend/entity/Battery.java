@@ -21,6 +21,10 @@ public class Battery {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Builder.Default
+    @Column(nullable = false)
+    private Boolean deleted = false;
+
     // 台账电池编号
     @Column(name = "battery_code" , nullable = false , unique = true , length = 64)
     private String batteryCode;
