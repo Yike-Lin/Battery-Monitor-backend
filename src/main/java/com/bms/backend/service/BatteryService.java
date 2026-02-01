@@ -154,8 +154,9 @@ public class BatteryService {
 
         OffsetDateTime lastRecordAt = null;
         if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
-            // 直接用 OffsetDateTime 自带的解析（支持 2026-01-31T22:35:14.857+08:00）
-            lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            LocalDateTime ldt = LocalDateTime.parse(request.getLastRecordAt(), formatter);
+            lastRecordAt = ldt.atOffset(ZoneOffset.ofHours(8));
         }
 
         // 3. 创建Battery实体
@@ -231,7 +232,9 @@ public class BatteryService {
         // 3. 解析 lastRecordAt （和 createBattery保持一致）
         OffsetDateTime lastRecordAt = null;
         if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
-            lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            LocalDateTime ldt = LocalDateTime.parse(request.getLastRecordAt(), formatter);
+            lastRecordAt = ldt.atOffset(ZoneOffset.ofHours(8));
         }
 
         // 4. 更新字段

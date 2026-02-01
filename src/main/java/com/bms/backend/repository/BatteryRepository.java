@@ -8,4 +8,6 @@ public interface BatteryRepository
         extends JpaRepository<Battery, Long>, JpaSpecificationExecutor<Battery> {
 
     Battery findByBatteryCode(String batteryCode);
+
+    boolean existsByBatteryCode(String batteryCode);
 }
