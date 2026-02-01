@@ -6,6 +6,7 @@ import com.bms.backend.dto.BatteryListQuery;
 import com.bms.backend.entity.Battery;
 import com.bms.backend.entity.BatteryModel;
 import com.bms.backend.entity.Customer;
+import com.bms.backend.exception.BusinessException;
 import com.bms.backend.repository.BatteryModelRepository;
 import com.bms.backend.repository.BatteryRepository;
 import com.bms.backend.repository.CustomerRepository;
@@ -131,6 +132,15 @@ public class BatteryService {
      */
     @Transactional
     public BatteryListItemDto createBattery(BatteryCreateRequest request){
+        // 0. 先校验 batteryCode
+        if (request.getBatteryCode() == null || request.getBatteryCode().trim().isEmpty()) {
+            throw new BusinessException("电池编码不能为空！");
+        }
+        String batteryCode = request.getBatteryCode().trim();
+        if (batteryRepository.existsByBatteryCode(batteryCode)) {
+            throw new BusinessException("电池编码已存在，请更换后再保存！");
+        }
+
         // 1. 处理型号:先查一下，没有就新建
         BatteryModel model = batteryModelRepository.findByModelCode(request.getModelCode());
         if (model == null) {
