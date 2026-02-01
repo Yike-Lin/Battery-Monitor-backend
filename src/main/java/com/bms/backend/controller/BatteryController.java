@@ -60,6 +60,17 @@ public class BatteryController {
         return batteryService.createBattery(request);
     }
 
+    /**
+     * 编辑
+     * @param id
+     * @param request
+     * @return
+     */
+    @PutMapping("/{id}")
+    public BatteryListItemDto update(@PathVariable Long id , @RequestBody BatteryCreateRequest request) {
+        return batteryService.updateBattery(id , request);
+    }
+
 
     /**
      * 删除

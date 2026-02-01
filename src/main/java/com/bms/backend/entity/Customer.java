@@ -22,6 +22,11 @@ public class Customer {
     @Column(nullable = false , unique = true , length = 128)
     private String name;
 
+    // 逻辑删除
+    @Builder.Default
+    @Column(nullable = false)
+    private Boolean deleted = false;
+
     // 备注
     @Column
     private String remark;

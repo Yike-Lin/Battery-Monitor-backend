@@ -194,5 +194,85 @@ public class BatteryService {
     }
 
 
+    /**
+     * 更新数据
+     * @param id
+     * @param request
+     * @return
+     */
+    @Transactional
+    public BatteryListItemDto updateBattery(Long id, BatteryCreateRequest request) {
+        // 1. 查出已有的 Battery
+        Battery battery = batteryRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Battery not found, id =" + id));
 
+        // 2. 处理model、customer和createBattery一样
+        BatteryModel model = null;
+        if (request.getModelCode() != null && !request.getModelCode().isEmpty()) {
+            model = batteryModelRepository.findByModelCode(request.getModelCode());
+            if (model == null) {
+                model = new BatteryModel();
+                model.setModelCode(request.getModelCode());
+                model = batteryModelRepository.save(model);
+            }
+        }
+
+        Customer customer = null;
+        if (request.getCustomerName() != null && !request.getCustomerName().isEmpty()) {
+            customer = customerRepository.findByName(request.getCustomerName());
+            if (customer == null) {
+                customer = new Customer();
+                customer.setName(request.getCustomerName());
+                customer.setDeleted(false);
+                customer = customerRepository.save(customer);
+            }
+        }
+
+        // 3. 解析 lastRecordAt （和 createBattery保持一致）
+        OffsetDateTime lastRecordAt = null;
+        if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
+            lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
+        }
+
+        // 4. 更新字段
+        battery.setBatteryCode(request.getBatteryCode());
+        battery.setModel(model);
+        battery.setCustomer(customer);
+        battery.setStatus(request.getStatus() != null ? request.getStatus() : 1);
+        battery.setCommissioningDate(request.getCommissioningDate());
+        battery.setRatedCapacityAh(request.getRatedCapacityAh());
+        battery.setSohPercent(request.getSohPercent());
+        battery.setCycleCount(request.getCycleCount());
+        battery.setLastRecordAt(lastRecordAt);
+
+        // 5. 保存
+        Battery saved = batteryRepository.save(battery);
+
+        // 6. 返回列表DTO
+        return toListItemDto(saved);
+    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
