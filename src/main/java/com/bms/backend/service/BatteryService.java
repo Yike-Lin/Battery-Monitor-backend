@@ -164,9 +164,8 @@ public class BatteryService {
 
         OffsetDateTime lastRecordAt = null;
         if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-            LocalDateTime ldt = LocalDateTime.parse(request.getLastRecordAt(), formatter);
-            lastRecordAt = ldt.atOffset(ZoneOffset.ofHours(8));
+            // 直接解析 ISO-8601 字符串
+            lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
         }
 
         // 3. 创建Battery实体
@@ -242,9 +241,8 @@ public class BatteryService {
         // 3. 解析 lastRecordAt （和 createBattery保持一致）
         OffsetDateTime lastRecordAt = null;
         if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-            LocalDateTime ldt = LocalDateTime.parse(request.getLastRecordAt(), formatter);
-            lastRecordAt = ldt.atOffset(ZoneOffset.ofHours(8));
+            // 直接解析 ISO-8601 字符串
+            lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
         }
 
         // 4. 更新字段
