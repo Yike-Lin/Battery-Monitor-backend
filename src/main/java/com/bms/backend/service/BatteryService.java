@@ -141,8 +141,18 @@ public class BatteryService {
             throw new BusinessException("电池编码已存在，请更换后再保存！");
         }
 
-        // 1. 处理型号:先查一下，没有就新建
-        BatteryModel model = batteryModelRepository.findByModelCode(request.getModelCode());
+        // 1. modelCode、customerName不允许为空
+        if(request.getModelCode() == null || request.getModelCode().trim().isEmpty()) {
+            throw new BusinessException("电池型号不能为空！");
+        }
+        String modelCode = request.getModelCode().trim();
+        if (request.getCustomerName() == null || request.getCustomerName().trim().isEmpty()) {
+            throw new BusinessException("所属客户不能为空！");
+        }
+        String customerName = request.getCustomerName().trim();
+
+        // 2. 处理型号:先查一下，没有就新建
+        BatteryModel model = batteryModelRepository.findByModelCode(modelCode);
         if (model == null) {
             model = BatteryModel.builder()
                     .modelCode(request.getModelCode())
@@ -150,21 +160,19 @@ public class BatteryService {
             model = batteryModelRepository.save(model);
         }
 
-        // 2. 处理客户
-        Customer customer = null;
-        if (request.getCustomerName() != null && !request.getCustomerName().isEmpty()) {
-            customer = customerRepository.findByName(request.getCustomerName());
-            if (customer == null){
-                customer = Customer.builder()
-                        .name(request.getCustomerName())
-                        .build();
-                customer = customerRepository.save(customer);
-            }
+        // 3. 处理客户:先查一下，没有就新建
+        Customer customer = customerRepository.findByName(customerName);
+        if (customer == null) {
+            customer = Customer.builder()
+                    .name(customerName)
+                    .deleted(false)
+                    .build();
+            customer = customerRepository.save(customer);
         }
 
+        // 4. 解析 lastRecordAt（ISO 字符串）
         OffsetDateTime lastRecordAt = null;
         if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
-            // 直接解析 ISO-8601 字符串
             lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
         }
 
