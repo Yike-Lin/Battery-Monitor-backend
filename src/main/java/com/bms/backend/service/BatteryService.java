@@ -220,41 +220,61 @@ public class BatteryService {
      */
     @Transactional
     public BatteryListItemDto updateBattery(Long id, BatteryCreateRequest request) {
-        // 1. 查出已有的 Battery
+        // 1. 查出已有的 Battery，然后检验未删除
         Battery battery = batteryRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Battery not found, id =" + id));
-
-        // 2. 处理model、customer和createBattery一样
-        BatteryModel model = null;
-        if (request.getModelCode() != null && !request.getModelCode().isEmpty()) {
-            model = batteryModelRepository.findByModelCode(request.getModelCode());
-            if (model == null) {
-                model = new BatteryModel();
-                model.setModelCode(request.getModelCode());
-                model = batteryModelRepository.save(model);
-            }
+                .orElseThrow(() -> new RuntimeException("电池不存在 , id =" + id));
+        if(Boolean.TRUE.equals(battery.getDeleted())) {
+            throw new BusinessException("该电池已被删除，无法编辑！");
         }
 
-        Customer customer = null;
-        if (request.getCustomerName() != null && !request.getCustomerName().isEmpty()) {
-            customer = customerRepository.findByName(request.getCustomerName());
-            if (customer == null) {
-                customer = new Customer();
-                customer.setName(request.getCustomerName());
-                customer.setDeleted(false);
-                customer = customerRepository.save(customer);
-            }
+        // 2. 校验batteryCode
+        if (request.getBatteryCode() == null || request.getBatteryCode().trim().isEmpty()) {
+            throw new BusinessException("电池编码不能为空！");
+        }
+        String batteryCode = request.getBatteryCode().trim();
+        // 编辑时校验编码唯一
+        boolean existsCode = batteryRepository.existsByBatteryCodeAndIdNot(batteryCode , id);
+        if (existsCode) {
+            throw new BusinessException("电池编码已经存在，请更换后再保存！");
         }
 
-        // 3. 解析 lastRecordAt （和 createBattery保持一致）
+        // 3. 校验 modelCode
+        if (request.getModelCode() == null || request.getModelCode().isEmpty()) {
+            throw new BusinessException("电池型号不能为空！");
+        }
+        String modelCode = request.getModelCode().trim();
+
+        // 4. 校验 customerName
+        if (request.getCustomerName() == null || request.getCustomerName().isEmpty()) {
+            throw new BusinessException("所属客户不能为空！");
+        }
+        String customerName = request.getCustomerName().trim();
+
+        // 5. 处理model：先查，没有再新建
+        BatteryModel model = batteryModelRepository.findByModelCode(modelCode);
+        if (model == null) {
+            model = new BatteryModel();
+            model.setModelCode(modelCode);
+            model = batteryModelRepository.save(model);
+        }
+
+        // 6. 处理customer：先查，没有再新建
+        Customer customer = customerRepository.findByName(customerName);
+        if (customer == null) {
+            customer = new Customer();
+            customer.setName(customerName);
+            customer.setDeleted(false);
+            customer = customerRepository.save(customer);
+        }
+
+        // 7. 解析 lastRecordAt
         OffsetDateTime lastRecordAt = null;
         if (request.getLastRecordAt() != null && !request.getLastRecordAt().isEmpty()) {
-            // 直接解析 ISO-8601 字符串
             lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
         }
 
-        // 4. 更新字段
-        battery.setBatteryCode(request.getBatteryCode());
+        // 8. 更新字段
+        battery.setBatteryCode(batteryCode);
         battery.setModel(model);
         battery.setCustomer(customer);
         battery.setStatus(request.getStatus() != null ? request.getStatus() : 1);
@@ -264,10 +284,10 @@ public class BatteryService {
         battery.setCycleCount(request.getCycleCount());
         battery.setLastRecordAt(lastRecordAt);
 
-        // 5. 保存
+        // 9. 保存
         Battery saved = batteryRepository.save(battery);
 
-        // 6. 返回列表DTO
+        // 10. 返回列表DTO
         return toListItemDto(saved);
     }
 }

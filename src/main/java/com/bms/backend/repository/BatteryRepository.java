@@ -9,5 +9,9 @@ public interface BatteryRepository
 
     Battery findByBatteryCode(String batteryCode);
 
+    // 用于新增时的校验编码唯一
     boolean existsByBatteryCode(String batteryCode);
+
+    // 用于编辑时的校验编码唯一
+    boolean existsByBatteryCodeAndIdNot(String batteryCode, Long id);
 }
