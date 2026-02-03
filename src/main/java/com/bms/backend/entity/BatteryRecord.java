@@ -1,7 +1,6 @@
 package com.bms.backend.entity;
 
 import lombok.*;
-
 import javax.persistence.*;
 
 @Entity
