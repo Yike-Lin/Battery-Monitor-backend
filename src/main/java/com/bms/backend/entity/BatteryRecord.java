@@ -31,6 +31,10 @@ public class BatteryRecord {
 
     // 电压
     @Column(name = "voltage",nullable = false)
+    private Double voltage;
+
+    // 电流
+    @Column(name = "current",nullable = false)
     private Double current;
 
     // 温度
