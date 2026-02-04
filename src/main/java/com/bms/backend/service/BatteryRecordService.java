@@ -76,7 +76,7 @@ public class BatteryRecordService {
                     .findByBatteryIdAndCycleLessThanEqual(batteryId , cycleEnd , pageable);
         // 情况4： 啥没有
         } else {
-            pageResult = batteryRecordRepository.findBatteryId(batteryId , pageable);
+            pageResult = batteryRecordRepository.findByBatteryId(batteryId , pageable);
         }
 
         // 4. 转成DTO

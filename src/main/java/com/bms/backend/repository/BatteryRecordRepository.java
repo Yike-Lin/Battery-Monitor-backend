@@ -10,7 +10,7 @@ import java.util.List;
 public interface BatteryRecordRepository extends JpaRepository<BatteryRecord , Long> {
 
     // 按电池ID 查询所有记录（分页）
-    Page<BatteryRecord> findBatteryId(Long batteryId , Pageable pageable);
+    Page<BatteryRecord> findByBatteryId(Long batteryId , Pageable pageable);
 
     // 按电池ID + cycle范围 查询(分页）
     Page<BatteryRecord> findByBatteryIdAndCycleBetween(Long batteryId,
