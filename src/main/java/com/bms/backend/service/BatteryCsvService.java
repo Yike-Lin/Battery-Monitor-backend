@@ -12,6 +12,7 @@ import com.bms.backend.repository.BatteryRecordRepository;
 import com.bms.backend.repository.BatteryRepository;
 import com.bms.backend.storage.ObjectStorageService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedReader;
@@ -88,7 +89,7 @@ public class BatteryCsvService {
                     continue;
                 }
 
-                String[] parts = line.split(",");
+                String[] parts = splitColumns(line);
 
                 // 处理表头
                 if (isFirstLine) {
@@ -264,33 +265,132 @@ public class BatteryCsvService {
         }
     }
 
+    /**
+     * 按列拆分：优先尝试逗号，若列数不足，再尝试制表符
+     */
+    private String[] splitColumns(String line) {
+        if (line == null) {
+            return new String[0];
+        }
+        // 先按逗号
+        String[] parts = line.split(",");
+        if (parts.length >= 6) {
+            return parts;
+        }
+        // 列数不够，再按制表符
+        parts = line.split("\t");
+        return parts;
+    }
 
 
+    /**
+     * 根据uploadToken从对象存储读取CSV，导入battery_record
+     * @param batteryId
+     * @param uploadToken
+     */
+    @Transactional
+    public void importFromUploadToken(Long batteryId, String uploadToken) {
+        if (batteryId == null) {
+            throw new BusinessException("batteryId 不能为空");
+        }
+        if (uploadToken == null || uploadToken.trim().isEmpty()) {
+            throw new BusinessException("uploadToken 不能为空");
+        }
 
+        // 1. 确认电池是否存在
+        Battery battery = batteryRepository.findById(batteryId)
+                .orElseThrow(() -> new BusinessException("电池不存在，id = " + batteryId));
 
+        // 2. 查上传记录（battery_csv_upload表）
+        BatteryCsvUpload upload = uploadRepository.findByUploadToken(uploadToken)
+                .orElseThrow(() -> new BusinessException("上传记录不存在，token = " + uploadToken));
+        // 防止同一token重复导入
+        if(upload.getStatus() != null && !"NEW".equalsIgnoreCase(upload.getStatus())) {
+            throw new BusinessException("该上传记录状态不是NEW，当前状态是：" + upload.getStatus());
+        }
+        String fileKey = upload.getFileKey();
+        if (fileKey == null || fileKey.trim().isEmpty()) {
+            throw new BusinessException("上传记录缺少 fileKey，无法导入");
+        }
 
+        List<BatteryRecord> records = new ArrayList<>();
+        long importedCount = 0L;
 
+        // 3. 从对象存储下载CSV流，逐行解析并写入battery_record
+        try(InputStream in = objectStorageService.downloadCsv(fileKey);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(in , StandardCharsets.UTF_8))) {
 
+            String line;
+            boolean isFirstLine = true;
 
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] parts = splitColumns(line);
 
+                // 跳过表头
+                if (isFirstLine) {
+                    System.out.println("CSV 表头: " + line + "，列数=" + parts.length);
+                    isFirstLine = false;
+                    continue;
+                }
 
+                if (parts.length < 6) {
+                    System.out.println("列数不足(" + parts.length + ")，跳过一行: " + line);
+                    continue;
+                }
 
+                Integer cycle = parseIntOrNull(parts[0]);
+                Double timeMin = parseDoubleOrNull(parts[1]);
+                Double voltage = parseDoubleOrNull(parts[2]);
+                Double current = parseDoubleOrNull(parts[3]);
+                Double temp = parseDoubleOrNull(parts[4]);
+                Double capacity = parseDoubleOrNull(parts[5]);
 
+                if (cycle == null || timeMin == null || voltage == null || current == null) {
+                    System.out.println("关键字段为空，跳过一行: " + line);
+                    continue;
+                }
 
+                BatteryRecord record = BatteryRecord.builder()
+                        .battery(battery)
+                        .cycle(cycle)
+                        .timeMin(timeMin)
+                        .voltage(voltage)
+                        .current(current)
+                        .temp(temp)
+                        .capacity(capacity)
+                        .sourceFile(upload.getFileName())
+                        .uploadBatch(uploadToken)
+                        .build();
 
+                records.add(record);
 
+                // 分批入库，避免一次性太大
+                if (records.size() >= 2000) {
+                    batteryRecordRepository.saveAll(records);
+                    importedCount += records.size();
+                    System.out.println("写入一批记录，条数: " + records.size());
+                    records.clear();
+                }
+            }
+            if (!records.isEmpty()) {
+                batteryRecordRepository.saveAll(records);
+                importedCount += records.size();
+            }
+        } catch (IOException e) {
+            upload.setStatus("FAILED");
+            uploadRepository.save(upload);
+            throw new BusinessException("从对象存储导入CSV失败：" + e.getMessage());
+        }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+        // 4. 导入成功，更新上传记录状态
+        upload.setStatus("USED");
+        upload.setBatteryId(batteryId);
+        upload.setUsedAt(OffsetDateTime.now());
+        upload.setRowCount(importedCount);
+        uploadRepository.save(upload);
+    }
 }

@@ -57,7 +57,15 @@ public class BatteryController {
      */
     @PostMapping
     public BatteryListItemDto create(@RequestBody BatteryCreateRequest request) {
-        return batteryService.createBattery(request);
+        // 1. 先创建台账
+        BatteryListItemDto dto = batteryService.createBattery(request);
+
+        // 2. 如果请求里带uploadToken，就根据token导入CSV
+        String uploadToken = request.getUploadToken();
+        if (uploadToken != null && !uploadToken.trim().isEmpty()){
+            batteryCsvService.importFromUploadToken(dto.getId() , uploadToken);
+        }
+        return dto;
     }
 
     /**
