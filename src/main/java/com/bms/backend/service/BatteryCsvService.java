@@ -1,20 +1,23 @@
 package com.bms.backend.service;
 
 
+import cn.hutool.core.text.replacer.StrReplacer;
 import com.bms.backend.dto.BatteryDraftDto;
 import com.bms.backend.entity.Battery;
+import com.bms.backend.entity.BatteryCsvUpload;
 import com.bms.backend.entity.BatteryRecord;
 import com.bms.backend.exception.BusinessException;
+import com.bms.backend.repository.BatteryCsvUploadRepository;
 import com.bms.backend.repository.BatteryRecordRepository;
 import com.bms.backend.repository.BatteryRepository;
+import com.bms.backend.storage.ObjectStorageService;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.StreamCorruptedException;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -27,113 +30,123 @@ public class BatteryCsvService {
 
     private final BatteryRepository batteryRepository;
     private final BatteryRecordRepository batteryRecordRepository;
+    private final BatteryCsvUploadRepository uploadRepository;
+    private final ObjectStorageService objectStorageService;
 
     public BatteryCsvService(BatteryRepository batteryRepository,
-                             BatteryRecordRepository batteryRecordRepository) {
+                             BatteryRecordRepository batteryRecordRepository, BatteryCsvUploadRepository batteryCsvUploadRepository, ObjectStorageService objectStorageService) {
         this.batteryRepository = batteryRepository;
         this.batteryRecordRepository = batteryRecordRepository;
+        this.uploadRepository = batteryCsvUploadRepository;
+        this.objectStorageService = objectStorageService;
     }
 
     /**
-     * 解析CSV出来一个电池台账草稿
+     * 解析CSV出来一个电池台账草稿(并把CSV本体存对象存储，元数据存PG）
      * @param file
-     * @return
+     * @return draft
      * @throws IOException
      */
     public BatteryDraftDto parseCsvToDraft(MultipartFile file) throws IOException {
-        // 记录列名 --> 列索引 映射
-        Map<String, Integer> headerIndex = new HashMap<>();
 
-        int cycleCol = -1;
-        int timeCol = -1;
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("上传文件为空");
+        }
 
-        // 记录最大Cycle数
-        Integer maxCycle = null;
-        // 有效数据行数量
-        long dataRowCount = 0;
+        // 1. 生成唯一标识uploadToken
+        String uploadToken = UUID.randomUUID().toString().replace("-", "");
 
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+        // 2. 将文件上传到MinIO，返回fileKey
+        String fileKey = objectStorageService.uploadCsv(uploadToken, file);
 
-            String line;
-            boolean isFirstLine = true;
+        // 3. 在PG中保存上传记录元数据
+        BatteryCsvUpload upload = new BatteryCsvUpload();
+        upload.setUploadToken(uploadToken);
+        upload.setFileName(file.getOriginalFilename());
+        upload.setFileSize(file.getSize());
+        upload.setContentType(file.getContentType());
+        upload.setFileKey(fileKey);
+        upload.setStatus("NEW");
+        upload.setCreatedAt(OffsetDateTime.now());
+        uploadRepository.save(upload);
+
+        // 4. 轻量化解析，计算Cycle和行数
+        int cycleCol = -1;              // Cycle列的索引位置
+        long dataRowCount = 0;          // 有效数据行数
+        Integer maxCycle = null;        // 记录最大的Cycle
+
+        try(InputStream in = objectStorageService.downloadCsv(fileKey);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(in , StandardCharsets.UTF_8))) {
+
+            Map<String, Integer> headerIndex = new HashMap<>();
+            String line;                // 暂存读取到的每一行文字
+            boolean isFirstLine = true; // 标记是否第一行
 
             while ((line = reader.readLine()) != null) {
-                // 去掉首尾空白
                 line = line.trim();
                 if (line.isEmpty()) {
-                    continue; // 跳过空行
-                }
-
-                // 简单按逗号分割
-                String[] parts = line.split(",");
-
-                // 第一行：表头
-                if (isFirstLine) {
-                    isFirstLine = false;
-
-                    for (int i = 0; i < parts.length; i++) {
-                        String colName = parts[i].trim();
-                        headerIndex.put(colName, i);
-                    }
-
-                    // 尝试找到几个关键列
-                    if (headerIndex.containsKey("Cycle")) {
-                        cycleCol = headerIndex.get("Cycle");
-                    }
-                    if (headerIndex.containsKey("Time_Min")) {
-                        timeCol = headerIndex.get("Time_Min");
-                    }
-
-                    // 如果没有 Cycle 列，就用行数估算
                     continue;
                 }
 
-                // 普通数据行
+                String[] parts = line.split(",");
+
+                // 处理表头
+                if (isFirstLine) {
+                    isFirstLine = false;
+                    // 建立列名——>索引的映射
+                    for (int i = 0; i <parts.length; i++) {
+                        String colName = parts[i].trim();
+                        headerIndex.put(colName , i);
+                    }
+                    // 尝试定位一下“Cycle列”
+                    if(headerIndex.containsKey("Cycle")) {
+                        cycleCol = headerIndex.get("Cycle");
+                    }
+                    continue;
+                }
+                // 处理数据行
                 dataRowCount++;
 
-                // 如果有 Cycle 列，解析它
+                // 提取并统计Cycle最大值
                 if (cycleCol >= 0 && cycleCol < parts.length) {
                     String cycleStr = parts[cycleCol].trim();
                     if (!cycleStr.isEmpty()) {
                         try {
                             int cycle = Integer.parseInt(cycleStr);
+                            // 擂台法维护Cycle最大值
                             if (maxCycle == null || cycle > maxCycle) {
                                 maxCycle = cycle;
                             }
-                        } catch (NumberFormatException e) {
-                            // 有脏数据，就忽略这个 cycle
-                            // 这里先不抛异常，尽量从其它行正常数据里统计
+                        }catch (NumberFormatException ignored) {
+                            // 跳过这行脏数据
                         }
                     }
                 }
 
-                // 有绝对时间列，再解析 timeCol，更新 lastRecordAt
             }
         }
-
-
-        // 计算 cycleCount
         int cycleCount;
         if (maxCycle != null) {
             cycleCount = maxCycle;
         } else {
-            // 没有 Cycle 列或完全解析不到，就用数据行数估算一下
             cycleCount = (int) dataRowCount;
         }
 
-        // 构造草稿 DTO
+        // 5. 回填统计信息
+        upload.setRowCount(dataRowCount);
+        upload.setCycleCount(cycleCount);
+        uploadRepository.save(upload);
+
+        // 6. 构造草稿DTO
         BatteryDraftDto draft = new BatteryDraftDto();
         draft.setBatteryCode(null);
         draft.setModelCode(null);
         draft.setCustomerName(null);
         draft.setRatedCapacityAh(null);
-
         draft.setCycleCount(cycleCount);
-        draft.setSohPercent(null);      // 暂不从 CSV 算
-        draft.setLastRecordAt(OffsetDateTime.now()); // 先用当前时间占位
-
-        draft.setUploadToken(UUID.randomUUID().toString());
+        draft.setSohPercent(null);
+        draft.setLastRecordAt(OffsetDateTime.now());
+        draft.setUploadToken(uploadToken);
 
         return draft;
     }
