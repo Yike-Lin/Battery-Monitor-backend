@@ -8,4 +8,7 @@ import java.util.Optional;
 public interface BatteryCsvUploadRepository extends JpaRepository<BatteryCsvUpload , Long> {
 
     Optional<BatteryCsvUpload> findByUploadToken(String uploadToken);
+
+    // 按usedAt倒序取电池最新一次绑定的上传记录
+    Optional<BatteryCsvUpload> findTopByBatteryIdOrderByUsedAtDesc(Long batteryId);
 }
