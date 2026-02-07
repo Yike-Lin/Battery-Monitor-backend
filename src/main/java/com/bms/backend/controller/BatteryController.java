@@ -1,10 +1,8 @@
 package com.bms.backend.controller;
 
 
-import com.bms.backend.dto.BatteryCreateRequest;
-import com.bms.backend.dto.BatteryDraftDto;
-import com.bms.backend.dto.BatteryListItemDto;
-import com.bms.backend.dto.BatteryListQuery;
+import com.bms.backend.dto.*;
+import com.bms.backend.entity.BatteryRecord;
 import com.bms.backend.service.BatteryCsvService;
 import com.bms.backend.service.BatteryService;
 import org.springframework.data.domain.Page;
@@ -13,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * 电池接口Controller
@@ -57,15 +56,7 @@ public class BatteryController {
      */
     @PostMapping
     public BatteryListItemDto create(@RequestBody BatteryCreateRequest request) {
-        // 1. 先创建台账
-        BatteryListItemDto dto = batteryService.createBattery(request);
-
-        // 2. 如果请求里带uploadToken，就根据token导入CSV
-        String uploadToken = request.getUploadToken();
-        if (uploadToken != null && !uploadToken.trim().isEmpty()){
-            batteryCsvService.importFromUploadToken(dto.getId() , uploadToken);
-        }
-        return dto;
+        return batteryService.createBattery(request);
     }
 
     /**
@@ -93,6 +84,14 @@ public class BatteryController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();   // 404未找到
         }
+    }
+
+    /**
+     * 按ID查询电池详情
+     */
+    @GetMapping("/{id}")
+    public BatteryListItemDto getById(@PathVariable Long id) {
+        return batteryService.getBatteryDetail(id);
     }
 
 
