@@ -7,6 +7,7 @@ import com.bms.backend.entity.Battery;
 import com.bms.backend.entity.BatteryModel;
 import com.bms.backend.entity.Customer;
 import com.bms.backend.exception.BusinessException;
+import com.bms.backend.repository.BatteryCsvUploadRepository;
 import com.bms.backend.repository.BatteryModelRepository;
 import com.bms.backend.repository.BatteryRepository;
 import com.bms.backend.repository.CustomerRepository;
@@ -15,15 +16,10 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import javax.persistence.criteria.Predicate;
 
 /**
@@ -35,13 +31,17 @@ public class BatteryService {
     private final BatteryRepository batteryRepository;
     private final BatteryModelRepository batteryModelRepository;
     private final CustomerRepository customerRepository;
+    private final BatteryCsvUploadRepository batteryCsvUploadRepository;
+    private final BatteryCsvService batteryCsvService;
 
     public BatteryService(BatteryRepository batteryRepository,
                           BatteryModelRepository batteryModelRepository,
-                          CustomerRepository customerRepository){
+                          CustomerRepository customerRepository, BatteryCsvUploadRepository batteryCsvUploadRepository, BatteryCsvService batteryCsvService){
         this.batteryRepository = batteryRepository;
         this.batteryModelRepository = batteryModelRepository;
         this.customerRepository = customerRepository;
+        this.batteryCsvUploadRepository = batteryCsvUploadRepository;
+        this.batteryCsvService = batteryCsvService;
     }
 
     /**
@@ -176,9 +176,9 @@ public class BatteryService {
             lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
         }
 
-        // 3. 创建Battery实体
+        // 5. 创建Battery实体
         Battery battery = Battery.builder()
-                .batteryCode(request.getBatteryCode())
+                .batteryCode(batteryCode)
                 .model(model)
                 .customer(customer)
                 .status(request.getStatus() != null ? request.getStatus() : 1)
@@ -191,6 +191,13 @@ public class BatteryService {
                 .build();
 
         battery = batteryRepository.save(battery);
+
+        // 6. 如果请求里带uploadToken，把这次上传记录绑定到电池
+        String uploadToken = request.getUploadToken();
+        if (uploadToken != null && !uploadToken.trim().isEmpty()) {
+            batteryCsvService.bindUploadToBattery(battery.getId(), uploadToken);
+        }
+
         return toListItemDto(battery);
     }
 
@@ -289,6 +296,21 @@ public class BatteryService {
 
         // 10. 返回列表DTO
         return toListItemDto(saved);
+    }
+
+
+    /**
+     * 按ID查询电池详情
+     */
+    public BatteryListItemDto getBatteryDetail(Long id) {
+        Battery battery = batteryRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("电池不存在, id = " + id));
+
+        if (Boolean.TRUE.equals(battery.getDeleted())) {
+            throw new BusinessException("该电池已被删除！");
+        }
+
+        return toListItemDto(battery);
     }
 }
 
