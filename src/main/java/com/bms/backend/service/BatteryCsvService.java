@@ -1,12 +1,10 @@
 package com.bms.backend.service;
 
 
-import cn.hutool.core.text.replacer.StrReplacer;
 import com.bms.backend.dto.BatteryDraftDto;
 import com.bms.backend.dto.BatteryRecordDto;
 import com.bms.backend.entity.Battery;
 import com.bms.backend.entity.BatteryCsvUpload;
-import com.bms.backend.entity.BatteryRecord;
 import com.bms.backend.exception.BusinessException;
 import com.bms.backend.repository.BatteryCsvUploadRepository;
 import com.bms.backend.repository.BatteryRecordRepository;
@@ -33,13 +31,15 @@ public class BatteryCsvService {
     private final BatteryRepository batteryRepository;
     private final BatteryRecordRepository batteryRecordRepository;
     private final BatteryCsvUploadRepository uploadRepository;
+    private final SohPredictService sohPredictService;
     private final ObjectStorageService objectStorageService;
 
     public BatteryCsvService(BatteryRepository batteryRepository,
-                             BatteryRecordRepository batteryRecordRepository, BatteryCsvUploadRepository batteryCsvUploadRepository, ObjectStorageService objectStorageService) {
+                             BatteryRecordRepository batteryRecordRepository, BatteryCsvUploadRepository batteryCsvUploadRepository, SohPredictService sohPredictService, ObjectStorageService objectStorageService) {
         this.batteryRepository = batteryRepository;
         this.batteryRecordRepository = batteryRecordRepository;
         this.uploadRepository = batteryCsvUploadRepository;
+        this.sohPredictService = sohPredictService;
         this.objectStorageService = objectStorageService;
     }
 
@@ -268,6 +268,33 @@ public class BatteryCsvService {
         upload.setStatus("USED");                 // 表示已被某个电池使用
         upload.setUsedAt(OffsetDateTime.now());
         uploadRepository.save(upload);
+    }
+
+
+    /**
+     * 根据uploadToken 预测SOH
+     * @param uploadToken
+     * @return
+     */
+    public Double predictSohByUploadToken(String uploadToken) {
+        BatteryCsvUpload upload = uploadRepository.findByUploadToken(uploadToken)
+                .orElseThrow(() -> new BusinessException("上传记录不存在，token = " + uploadToken));
+
+        String fileKey = upload.getFileKey();
+        if (fileKey == null || fileKey.trim().isEmpty()) {
+            throw new BusinessException("上传记录缺少 fileKey，无法进行 SOH 预测");
+        }
+
+        Integer cycleCount = upload.getCycleCount();
+        int cycleForPredict;
+        if (cycleCount != null && cycleCount > 0) {
+            cycleForPredict = cycleCount;
+        } else {
+            // 没有记录就退化成用第一个循环
+            cycleForPredict = 1;
+        }
+
+        return sohPredictService.predictSohFromCsvFileKey(fileKey, cycleForPredict);
     }
 
 
