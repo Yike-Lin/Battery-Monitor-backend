@@ -16,6 +16,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -176,7 +177,25 @@ public class BatteryService {
             lastRecordAt = OffsetDateTime.parse(request.getLastRecordAt());
         }
 
-        // 5. 创建Battery实体
+        // 5. 先看有没有uploadToken，有就先做SOH预测
+        String uploadToken = request.getUploadToken();
+        Double sohPredict = null;
+        if (uploadToken != null && !uploadToken.trim().isEmpty()) {
+            sohPredict = batteryCsvService.predictSohByUploadToken(uploadToken);
+            System.out.println("=== createBattery sohPredict from CSV = " + sohPredict);
+        }
+
+        // 6. 处理BigDecimal类型字段
+        BigDecimal sohValue = null;
+        if (sohPredict != null) {
+            sohValue = BigDecimal
+                    .valueOf(sohPredict)
+                    .multiply(BigDecimal.valueOf(100));
+        } else {
+            sohValue = request.getSohPercent();
+        }
+
+        // 7. 创建Battery实体
         Battery battery = Battery.builder()
                 .batteryCode(batteryCode)
                 .model(model)
@@ -184,7 +203,7 @@ public class BatteryService {
                 .status(request.getStatus() != null ? request.getStatus() : 1)
                 .commissioningDate(request.getCommissioningDate())
                 .ratedCapacityAh(request.getRatedCapacityAh())
-                .sohPercent(request.getSohPercent())
+                .sohPercent(sohValue)
                 .cycleCount(request.getCycleCount())
                 .lastRecordAt(lastRecordAt)
                 .deleted(false)
@@ -192,8 +211,7 @@ public class BatteryService {
 
         battery = batteryRepository.save(battery);
 
-        // 6. 如果请求里带uploadToken，把这次上传记录绑定到电池
-        String uploadToken = request.getUploadToken();
+        // 8. 如果请求里带uploadToken，把这次上传记录绑定到电池
         if (uploadToken != null && !uploadToken.trim().isEmpty()) {
             batteryCsvService.bindUploadToBattery(battery.getId(), uploadToken);
         }
