@@ -46,6 +46,7 @@ public class BatteryController {
      */
     @PostMapping("/upload")
     public BatteryDraftDto upload(@RequestParam("file")MultipartFile file) throws IOException {
+        System.out.println("=== BatteryController.upload CSV called, file=" + file.getOriginalFilename());
         return batteryCsvService.parseCsvToDraft(file);
     }
 
