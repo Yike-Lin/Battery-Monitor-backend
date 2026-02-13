@@ -2,6 +2,7 @@ package com.bms.backend.controller;
 
 import com.bms.backend.dto.BatteryRecordDto;
 import com.bms.backend.dto.BatteryRecordQuery;
+import com.bms.backend.dto.LifecyclePointDto;
 import com.bms.backend.service.BatteryCsvService;
 import com.bms.backend.service.BatteryRecordService;
 import org.springframework.data.domain.Page;
@@ -32,6 +33,16 @@ public class BatteryRecordController {
     public List<BatteryRecordDto> listRecordsByCycle(@PathVariable Long batteryId ,
                                                      @RequestParam("cycle") Integer cycle) {
         return batteryCsvService.getRecordsByBatteryAndCycle(batteryId , cycle);
+    }
+
+    /**
+     * 全生命周期容量趋势：按电池ID返回每个cycle的容量
+     * @param batteryId
+     * @return
+     */
+    @GetMapping("/lifecycle-capacity")
+    public List<LifecyclePointDto> getLifecycleCapacity(@PathVariable Long batteryId) {
+        return batteryCsvService.getLifecycleCapacityTrend(batteryId);
     }
 
 
