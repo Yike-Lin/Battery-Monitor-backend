@@ -3,6 +3,7 @@ package com.bms.backend.service;
 
 import com.bms.backend.dto.BatteryDraftDto;
 import com.bms.backend.dto.BatteryRecordDto;
+import com.bms.backend.dto.LifecyclePointDto;
 import com.bms.backend.entity.Battery;
 import com.bms.backend.entity.BatteryCsvUpload;
 import com.bms.backend.exception.BusinessException;
@@ -268,6 +269,99 @@ public class BatteryCsvService {
         upload.setStatus("USED");                 // 表示已被某个电池使用
         upload.setUsedAt(OffsetDateTime.now());
         uploadRepository.save(upload);
+    }
+
+
+    /**
+     * 全生命周期容量趋势：按电池ID解析CSV，按cycle汇总每轮容量
+     * @param batteryId
+     * @return （cycle, capacityAh）
+     */
+    public List<LifecyclePointDto> getLifecycleCapacityTrend(Long batteryId) {
+        if (batteryId == null) {
+            throw new BusinessException("batteryId 不能为空");
+        }
+
+        if (!batteryRepository.existsById(batteryId)) {
+            throw new BusinessException("电池不存在，id=" + batteryId);
+        }
+
+        // 找这个电池关联的上传记录（最新一条）
+        BatteryCsvUpload upload = uploadRepository
+                .findTopByBatteryIdOrderByUsedAtDesc(batteryId)
+                .orElseThrow(() -> new BusinessException("该电池没有关联的CSV上传记录"));
+
+        String fileKey = upload.getFileKey();
+        if (fileKey == null || fileKey.trim().isEmpty()) {
+            throw new BusinessException("上传记录缺少 fileKey，无法读取CSV");
+        }
+
+        Map<Integer, Double> lastCapacityByCycle = new HashMap<>();
+
+        try (InputStream in = objectStorageService.downloadCsv(fileKey);
+             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+
+            String line;
+            boolean isFirstLine = true;
+            Map<String, Integer> headerIndex = new HashMap<>();
+
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+
+                String[] parts = splitColumns(line);
+
+                // 处理表头
+                if (isFirstLine) {
+                    isFirstLine = false;
+                    for (int i = 0; i < parts.length; i++) {
+                        String colName = parts[i].trim();
+                        headerIndex.put(colName, i);
+                    }
+                    System.out.println("Lifecycle header index: " + headerIndex);
+                    continue;
+                }
+
+                Integer cycleIdx    = headerIndex.get("Cycle");
+                Integer capacityIdx = headerIndex.get("Capacity");
+                if (cycleIdx == null || capacityIdx == null) {
+                    throw new BusinessException("CSV 中缺少 Cycle 或 Capacity 列");
+                }
+
+                if (parts.length <= Math.max(cycleIdx, capacityIdx)) {
+                    continue;
+                }
+
+                Integer c       = parseIntOrNull(parts[cycleIdx]);
+                Double capacity = parseDoubleOrNull(parts[capacityIdx]);
+
+                if (c == null) {
+                    continue;
+                }
+                if (capacity != null) {
+                    // 每次覆盖，最后留下这个 cycle 的“最后一条容量值”
+                    lastCapacityByCycle.put(c, capacity);
+                }
+            }
+
+        } catch (IOException e) {
+            throw new BusinessException("读取 CSV 失败：" + e.getMessage());
+        }
+
+        // Map -> List，按 cycle 升序排序
+        List<LifecyclePointDto> result = new ArrayList<>();
+        lastCapacityByCycle.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    LifecyclePointDto dto = new LifecyclePointDto();
+                    dto.setCycle(entry.getKey());
+                    dto.setCapacityAh(entry.getValue());
+                    result.add(dto);
+                });
+
+        return result;
     }
 
 
