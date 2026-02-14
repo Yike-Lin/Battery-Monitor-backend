@@ -317,6 +317,18 @@ public class BatteryService {
     }
 
 
+
+    /**
+     * 获取最新添加的一个电池（单体电池展示用）
+     * @return
+     */
+    public BatteryListItemDto getLatestBattery() {
+        return batteryRepository.findTopByOrderByIdDesc()
+                .map(this::toListItemDto)
+                .orElse(null);
+    }
+
+
     /**
      * 按ID查询电池详情
      */
