@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.sound.midi.MidiFileFormat;
 import java.io.IOException;
 import java.util.List;
 
@@ -26,6 +27,22 @@ public class BatteryController {
                              BatteryCsvService batteryCsvService) {
         this.batteryService = batteryService;
         this.batteryCsvService = batteryCsvService;
+    }
+
+
+    /**
+     * 获取最新添加的电池详情
+     * @return
+     */
+    @GetMapping("/latest")
+    public ResponseEntity<BatteryListItemDto> getLatest() {
+
+        BatteryListItemDto dto = batteryService.getLatestBattery();
+        if (dto == null) {
+            // 如果数据库没有数据，返回404
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(dto);
     }
 
     /**
