@@ -4,6 +4,8 @@ import com.bms.backend.entity.Battery;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.util.Optional;
+
 public interface BatteryRepository
         extends JpaRepository<Battery, Long>, JpaSpecificationExecutor<Battery> {
 
@@ -14,4 +16,7 @@ public interface BatteryRepository
 
     // 用于编辑时的校验编码唯一
     boolean existsByBatteryCodeAndIdNot(String batteryCode, Long id);
+
+    // 获取最新电池：按ID倒序排列取第一条
+    Optional<Battery> findTopByOrderByIdDesc();
 }
