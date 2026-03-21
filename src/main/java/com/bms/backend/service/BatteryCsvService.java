@@ -34,14 +34,20 @@ public class BatteryCsvService {
     private final BatteryCsvUploadRepository uploadRepository;
     private final SohPredictService sohPredictService;
     private final ObjectStorageService objectStorageService;
+    private final InfluxCsvIngestService influxCsvIngestService;
 
     public BatteryCsvService(BatteryRepository batteryRepository,
-                             BatteryRecordRepository batteryRecordRepository, BatteryCsvUploadRepository batteryCsvUploadRepository, SohPredictService sohPredictService, ObjectStorageService objectStorageService) {
+                             BatteryRecordRepository batteryRecordRepository,
+                             BatteryCsvUploadRepository batteryCsvUploadRepository,
+                             SohPredictService sohPredictService,
+                             ObjectStorageService objectStorageService,
+                             InfluxCsvIngestService influxCsvIngestService) {
         this.batteryRepository = batteryRepository;
         this.batteryRecordRepository = batteryRecordRepository;
         this.uploadRepository = batteryCsvUploadRepository;
         this.sohPredictService = sohPredictService;
         this.objectStorageService = objectStorageService;
+        this.influxCsvIngestService = influxCsvIngestService;
     }
 
     /**
@@ -269,6 +275,17 @@ public class BatteryCsvService {
         upload.setStatus("USED");                 // 表示已被某个电池使用
         upload.setUsedAt(OffsetDateTime.now());
         uploadRepository.save(upload);
+
+        // 绑定成功后，把上传 CSV 自动写入 InfluxDB，供大屏实时遥测使用
+        String fileKey = upload.getFileKey();
+        String cellId = battery.getBatteryCode(); // 约定 cell_id 与 batteryCode 一致
+        String batchId = uploadToken;
+        try {
+            influxCsvIngestService.ingestFromMinioCsv(fileKey, cellId, batchId);
+        } catch (Exception e) {
+            // 异步写入失败不应影响绑定事务
+            System.out.println("Influx 写入触发失败（非致命）：fileKey=" + fileKey + ", err=" + e.getMessage());
+        }
     }
 
 
