@@ -16,10 +16,13 @@ public class BatteryDashboardController {
     // 前端调用地址: GET /api/battery/stream
     @GetMapping("/stream")
     public DashboardData getStream(
-            // ⚠️ 这里定义默认值：Pack A = b1c0, Pack B = b1c1
-            @RequestParam(defaultValue = "b1c0") String idA,
-            @RequestParam(defaultValue = "b1c1") String idB
+            // 不传 idA/idB 时：自动从 InfluxDB 选择“最新采样”的电池作为双通道数据源
+            @RequestParam(required = false) String idA,
+            @RequestParam(required = false) String idB
     ) {
+        if (idA == null || idA.isEmpty() || idB == null || idB.isEmpty()) {
+            return batteryDataService.getDashboardStreamLatestTwo();
+        }
         return batteryDataService.getDashboardStream(idA, idB);
     }
 }
