@@ -45,7 +45,7 @@ public class BatteryDataService {
         // 逻辑：在过去 1 分钟内，找出 idA 或 idB 的 voltage/current 数据，取最后一条，并把字段转为列
         String query = String.format(
                 "from(bucket: \"%s\") " +
-                        "|> range(start: -1m) " +
+                        "|> range(start: -30d) " +
                         "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
                         "|> filter(fn: (r) => r[\"cell_id\"] == \"%s\" or r[\"cell_id\"] == \"%s\") " +
                         "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"current\") " +
@@ -54,6 +54,10 @@ public class BatteryDataService {
                 bucket, idA, idB);
 
         try {
+            // 返回给前端用于显示
+            data.setCellIdA(idA);
+            data.setCellIdB(idB);
+
             // 2. 执行查询
             List<FluxTable> tables = influxDBClient.getQueryApi().query(query, org);
 
@@ -108,7 +112,112 @@ public class BatteryDataService {
         return data;
     }
 
-    // 辅助方法：安全转 Double
+    /**
+     * 自动选择 InfluxDB 中“最新采样”的电池 cell_id（取最新两块）作为双通道数据源。
+     * 前端只要调用 /api/battery-dashboard/stream 不传 idA/idB，就会走这里。
+     */
+    public DashboardData getDashboardStreamLatestTwo() {
+        DashboardData data = new DashboardData();
+
+        try {
+            // 1) 取最新的 2 个 cell_id（用 voltage 的 last() 作为采样时间依据）
+            String queryLatestCells = String.format(
+                    "from(bucket: \"%s\") " +
+                            "|> range(start: -30d) " +
+                            "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
+                            "|> filter(fn: (r) => r[\"_field\"] == \"voltage\") " +
+                            "|> group(columns: [\"cell_id\"]) " +
+                            "|> last() " +
+                            "|> keep(columns: [\"cell_id\", \"_time\"]) " +
+                            "|> sort(columns: [\"_time\"], desc: true) " +
+                            "|> limit(n: 2)",
+                    bucket
+            );
+
+            List<FluxTable> tables = influxDBClient.getQueryApi().query(queryLatestCells, org);
+
+            String idA = null;
+            String idB = null;
+            Instant latestTime = null;
+
+            for (FluxTable table : tables) {
+                for (FluxRecord record : table.getRecords()) {
+                    String cellId = (String) record.getValueByKey("cell_id");
+                    if (cellId == null) continue;
+
+                    if (idA == null) {
+                        idA = cellId;
+                    } else if (idB == null && !cellId.equals(idA)) {
+                        idB = cellId;
+                    }
+
+                    if (record.getTime() != null) {
+                        if (latestTime == null || record.getTime().isAfter(latestTime)) {
+                            latestTime = record.getTime();
+                        }
+                    }
+                }
+            }
+
+            // 如果只查到 1 块，就让 B= A，保证前端不报空
+            if (idA == null) {
+                data.setTime(timeFormatter.format(Instant.now()));
+                return data;
+            }
+            if (idB == null) idB = idA;
+
+            // 返回给前端用于显示
+            data.setCellIdA(idA);
+            data.setCellIdB(idB);
+
+            // 2) 查这两个 cell_id 的最后电压/电流，pivot 成列
+            String queryLatestVaCa = String.format(
+                    "from(bucket: \"%s\") " +
+                            "|> range(start: -30d) " +
+                            "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
+                            "|> filter(fn: (r) => r[\"cell_id\"] == \"%s\" or r[\"cell_id\"] == \"%s\") " +
+                            "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"current\") " +
+                            "|> last() " +
+                            "|> pivot(rowKey:[\"_time\", \"cell_id\"], columnKey: [\"_field\"], valueColumn: \"_value\")",
+                    bucket, idA, idB
+            );
+
+            List<FluxTable> tables2 = influxDBClient.getQueryApi().query(queryLatestVaCa, org);
+
+            for (FluxTable table : tables2) {
+                for (FluxRecord record : table.getRecords()) {
+                    String cellId = (String) record.getValueByKey("cell_id");
+                    if (cellId == null) continue;
+
+                    double v = getDoubleValue(record.getValueByKey("voltage"));
+                    double c = getDoubleValue(record.getValueByKey("current"));
+
+                    if (record.getTime() != null) {
+                        if (latestTime == null || record.getTime().isAfter(latestTime)) {
+                            latestTime = record.getTime();
+                        }
+                    }
+
+                    if (idA.equals(cellId)) {
+                        data.setVa(v);
+                        data.setCa(c);
+                    } else if (idB.equals(cellId)) {
+                        data.setVb(v);
+                        data.setCb(c);
+                    }
+                }
+            }
+
+            data.setTime(latestTime != null ? timeFormatter.format(latestTime) : timeFormatter.format(Instant.now()));
+            return data;
+        } catch (Exception e) {
+            log.error("❌ 查询 InfluxDB 最新电池失败: {}", e.getMessage());
+            data.setTime(timeFormatter.format(Instant.now()));
+            return data;
+        }
+    }
+
+    // 辅安全转 Double
     private double getDoubleValue(Object value) {
         if (value == null) return 0.0;
         if (value instanceof Number) {
