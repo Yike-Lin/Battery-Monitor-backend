@@ -120,5 +120,13 @@ public class BatteryController {
         return batteryService.getSohError(id);
     }
 
+    /**
+     * 按当前模型重新计算并回写 SOH
+     */
+    @PostMapping("/{id}/soh-recalculate")
+    public BatteryListItemDto recalculateSoh(@PathVariable Long id) {
+        return batteryService.recalculateSoh(id);
+    }
+
 
 }
