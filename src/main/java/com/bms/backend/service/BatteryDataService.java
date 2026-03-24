@@ -45,6 +45,11 @@ public class BatteryDataService {
     // 时间格式化器：转成前端需要的 "HH:mm:ss"
     private final DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
             .withZone(ZoneId.systemDefault());
+    // IC 主分析电压窗口（抑制两端噪声）
+    private static final double IC_V_MIN = 3.60;
+    private static final double IC_V_MAX = 4.20;
+    // dQ/dV 裁剪上限（先粗裁，再做分位数裁剪）
+    private static final double DQDV_ABS_CLIP = 30.0;
 
     /**
      * 获取双通道实时数据
@@ -417,14 +422,17 @@ public class BatteryDataService {
             double q1 = points.get(i - 1)[1];
             double v2 = points.get(i)[0];
             double q2 = points.get(i)[1];
+            double vmid = (v1 + v2) / 2.0;
+            if (vmid < IC_V_MIN || vmid > IC_V_MAX) continue;
             double dv = v2 - v1;
             if (Math.abs(dv) < 1e-6) continue;
             double dqdv = (q2 - q1) / dv;
             if (Double.isNaN(dqdv) || Double.isInfinite(dqdv)) continue;
-            dqdv = Math.max(-50, Math.min(50, dqdv));
-            raw.add(new IcPointDto((v1 + v2) / 2.0, dqdv));
+            dqdv = Math.max(-DQDV_ABS_CLIP, Math.min(DQDV_ABS_CLIP, dqdv));
+            raw.add(new IcPointDto(vmid, dqdv));
         }
-        List<IcPointDto> smoothed = smoothIc(raw, Math.max(1, smoothWindow));
+        List<IcPointDto> robust = robustClip(raw);
+        List<IcPointDto> smoothed = smoothIc(robust, Math.max(1, smoothWindow));
         smoothed.sort(Comparator.comparingDouble(p -> p.getVoltage() == null ? 0.0 : p.getVoltage()));
         return smoothed;
     }
@@ -525,6 +533,44 @@ public class BatteryDataService {
             }
             double avg = n > 0 ? sum / n : 0.0;
             out.add(new IcPointDto(src.get(i).getVoltage(), avg));
+        }
+        return out;
+    }
+
+    /**
+     * 使用 MAD（中位数绝对偏差）做鲁棒裁剪，抑制尖峰。
+     */
+    private List<IcPointDto> robustClip(List<IcPointDto> src) {
+        if (src == null || src.size() < 8) return src;
+        List<Double> vals = src.stream()
+                .map(IcPointDto::getDqdv)
+                .filter(v -> v != null && !Double.isNaN(v) && !Double.isInfinite(v))
+                .sorted()
+                .collect(Collectors.toList());
+        if (vals.size() < 8) return src;
+
+        double median = vals.get(vals.size() / 2);
+        List<Double> absDev = vals.stream()
+                .map(v -> Math.abs(v - median))
+                .sorted()
+                .collect(Collectors.toList());
+        double mad = absDev.get(absDev.size() / 2);
+        if (mad < 1e-9) return src;
+
+        double sigma = 1.4826 * mad;
+        double lo = median - 3.5 * sigma;
+        double hi = median + 3.5 * sigma;
+
+        List<IcPointDto> out = new ArrayList<>(src.size());
+        for (IcPointDto p : src) {
+            if (p.getDqdv() == null) {
+                out.add(p);
+                continue;
+            }
+            double v = p.getDqdv();
+            if (v < lo) v = lo;
+            if (v > hi) v = hi;
+            out.add(new IcPointDto(p.getVoltage(), v));
         }
         return out;
     }
