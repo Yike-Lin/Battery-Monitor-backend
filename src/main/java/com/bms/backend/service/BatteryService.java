@@ -3,12 +3,15 @@ package com.bms.backend.service;
 import com.bms.backend.dto.BatteryCreateRequest;
 import com.bms.backend.dto.BatteryListItemDto;
 import com.bms.backend.dto.BatteryListQuery;
+import com.bms.backend.dto.SohErrorDto;
 import com.bms.backend.entity.Battery;
 import com.bms.backend.entity.BatteryModel;
+import com.bms.backend.entity.BatteryRecord;
 import com.bms.backend.entity.Customer;
 import com.bms.backend.exception.BusinessException;
 import com.bms.backend.repository.BatteryCsvUploadRepository;
 import com.bms.backend.repository.BatteryModelRepository;
+import com.bms.backend.repository.BatteryRecordRepository;
 import com.bms.backend.repository.BatteryRepository;
 import com.bms.backend.repository.CustomerRepository;
 import org.springframework.data.domain.*;
@@ -32,15 +35,20 @@ public class BatteryService {
     private final BatteryRepository batteryRepository;
     private final BatteryModelRepository batteryModelRepository;
     private final CustomerRepository customerRepository;
+    private final BatteryRecordRepository batteryRecordRepository;
     private final BatteryCsvUploadRepository batteryCsvUploadRepository;
     private final BatteryCsvService batteryCsvService;
 
     public BatteryService(BatteryRepository batteryRepository,
                           BatteryModelRepository batteryModelRepository,
-                          CustomerRepository customerRepository, BatteryCsvUploadRepository batteryCsvUploadRepository, BatteryCsvService batteryCsvService){
+                          CustomerRepository customerRepository,
+                          BatteryRecordRepository batteryRecordRepository,
+                          BatteryCsvUploadRepository batteryCsvUploadRepository,
+                          BatteryCsvService batteryCsvService){
         this.batteryRepository = batteryRepository;
         this.batteryModelRepository = batteryModelRepository;
         this.customerRepository = customerRepository;
+        this.batteryRecordRepository = batteryRecordRepository;
         this.batteryCsvUploadRepository = batteryCsvUploadRepository;
         this.batteryCsvService = batteryCsvService;
     }
@@ -341,6 +349,52 @@ public class BatteryService {
         }
 
         return toListItemDto(battery);
+    }
+
+    /**
+     * 计算已入库电池的 SOH 误差（基于数据库最新记录）：
+     * pred_soh = battery.soh_percent / 100
+     * true_soh = latest_capacity / rated_capacity
+     */
+    @Transactional(readOnly = true)
+    public SohErrorDto getSohError(Long id) {
+        Battery battery = batteryRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("电池不存在, id = " + id));
+        if (Boolean.TRUE.equals(battery.getDeleted())) {
+            throw new BusinessException("该电池已被删除，无法计算误差");
+        }
+        if (battery.getSohPercent() == null) {
+            throw new BusinessException("该电池暂无 SOH 预测值（sohPercent 为空）");
+        }
+        if (battery.getRatedCapacityAh() == null || battery.getRatedCapacityAh().doubleValue() <= 0) {
+            throw new BusinessException("该电池额定容量无效，无法计算误差");
+        }
+
+        BatteryRecord latest = batteryRecordRepository
+                .findTopByBatteryIdOrderByCycleDescTimeMinDesc(id)
+                .orElseThrow(() -> new BusinessException("该电池暂无测试记录，无法计算误差"));
+        if (latest.getCapacity() == null) {
+            throw new BusinessException("最新测试记录缺少容量值，无法计算误差");
+        }
+
+        double predSoh = battery.getSohPercent().doubleValue() / 100.0;
+        double ratedCapacity = battery.getRatedCapacityAh().doubleValue();
+        double trueCapacity = latest.getCapacity();
+        double trueSoh = trueCapacity / ratedCapacity;
+        double absError = Math.abs(predSoh - trueSoh);
+        double apePercent = absError / (Math.abs(trueSoh) + 1e-8) * 100.0;
+
+        SohErrorDto dto = new SohErrorDto();
+        dto.setBatteryId(battery.getId());
+        dto.setBatteryCode(battery.getBatteryCode());
+        dto.setLatestCycle(latest.getCycle());
+        dto.setRatedCapacityAh(ratedCapacity);
+        dto.setTrueCapacityAh(trueCapacity);
+        dto.setPredSoh(predSoh);
+        dto.setTrueSoh(trueSoh);
+        dto.setAbsError(absError);
+        dto.setApePercent(apePercent);
+        return dto;
     }
 }
 
