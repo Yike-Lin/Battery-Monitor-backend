@@ -3,6 +3,7 @@ package com.bms.backend.service;
 import com.bms.backend.dto.BatteryCreateRequest;
 import com.bms.backend.dto.BatteryListItemDto;
 import com.bms.backend.dto.BatteryListQuery;
+import com.bms.backend.dto.LifecyclePointDto;
 import com.bms.backend.dto.SohErrorDto;
 import com.bms.backend.entity.Battery;
 import com.bms.backend.entity.BatteryModel;
@@ -363,37 +364,63 @@ public class BatteryService {
         if (Boolean.TRUE.equals(battery.getDeleted())) {
             throw new BusinessException("该电池已被删除，无法计算误差");
         }
-        if (battery.getSohPercent() == null) {
-            throw new BusinessException("该电池暂无 SOH 预测值（sohPercent 为空）");
-        }
-        if (battery.getRatedCapacityAh() == null || battery.getRatedCapacityAh().doubleValue() <= 0) {
-            throw new BusinessException("该电池额定容量无效，无法计算误差");
-        }
-
-        BatteryRecord latest = batteryRecordRepository
-                .findTopByBatteryIdOrderByCycleDescTimeMinDesc(id)
-                .orElseThrow(() -> new BusinessException("该电池暂无测试记录，无法计算误差"));
-        if (latest.getCapacity() == null) {
-            throw new BusinessException("最新测试记录缺少容量值，无法计算误差");
-        }
-
-        double predSoh = battery.getSohPercent().doubleValue() / 100.0;
-        double ratedCapacity = battery.getRatedCapacityAh().doubleValue();
-        double trueCapacity = latest.getCapacity();
-        double trueSoh = trueCapacity / ratedCapacity;
-        double absError = Math.abs(predSoh - trueSoh);
-        double apePercent = absError / (Math.abs(trueSoh) + 1e-8) * 100.0;
-
         SohErrorDto dto = new SohErrorDto();
         dto.setBatteryId(battery.getId());
         dto.setBatteryCode(battery.getBatteryCode());
-        dto.setLatestCycle(latest.getCycle());
-        dto.setRatedCapacityAh(ratedCapacity);
+        dto.setRatedCapacityAh(battery.getRatedCapacityAh() != null ? battery.getRatedCapacityAh().doubleValue() : null);
+        dto.setCalculable(false);
+        dto.setReason("缺少必要数据");
+
+        if (battery.getSohPercent() != null) {
+            dto.setPredSoh(battery.getSohPercent().doubleValue() / 100.0);
+        } else {
+            dto.setReason("battery.sohPercent 为空，请先完成 SOH 预测并保存");
+        }
+
+        if (battery.getRatedCapacityAh() == null || battery.getRatedCapacityAh().doubleValue() <= 0) {
+            dto.setReason("battery.ratedCapacityAh 无效或为空");
+            return dto;
+        }
+
+        BatteryRecord latest = batteryRecordRepository
+                .findTopByBatteryIdAndCapacityIsNotNullOrderByCycleDescTimeMinDesc(id)
+                .orElse(null);
+
+        Integer latestCycle = null;
+        Double trueCapacity = null;
+        if (latest != null) {
+            latestCycle = latest.getCycle();
+            trueCapacity = latest.getCapacity();
+        } else {
+            // 兜底：某些流程未落库 battery_record，但 CSV 生命周期可读
+            List<LifecyclePointDto> lifecycle = batteryCsvService.getLifecycleCapacityTrend(id);
+            if (lifecycle != null && !lifecycle.isEmpty()) {
+                LifecyclePointDto last = lifecycle.get(lifecycle.size() - 1);
+                latestCycle = last.getCycle();
+                trueCapacity = last.getCapacityAh();
+            }
+        }
+
+        if (trueCapacity == null) {
+            dto.setReason("无可用容量记录（battery_record 和 CSV 生命周期均为空）");
+            return dto;
+        }
+
+        double ratedCapacity = battery.getRatedCapacityAh().doubleValue();
+        double trueSoh = trueCapacity / ratedCapacity;
+
+        dto.setLatestCycle(latestCycle);
         dto.setTrueCapacityAh(trueCapacity);
-        dto.setPredSoh(predSoh);
         dto.setTrueSoh(trueSoh);
-        dto.setAbsError(absError);
-        dto.setApePercent(apePercent);
+
+        if (dto.getPredSoh() != null) {
+            double absError = Math.abs(dto.getPredSoh() - trueSoh);
+            double apePercent = absError / (Math.abs(trueSoh) + 1e-8) * 100.0;
+            dto.setAbsError(absError);
+            dto.setApePercent(apePercent);
+            dto.setCalculable(true);
+            dto.setReason("ok");
+        }
         return dto;
     }
 }
