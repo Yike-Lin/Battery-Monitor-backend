@@ -2,7 +2,9 @@ package com.bms.backend.service;
 
 import com.bms.backend.dto.IcAnalysisResponse;
 import com.bms.backend.dto.IcPointDto;
+import com.bms.backend.entity.Battery;
 import com.bms.backend.entity.DashboardData;
+import com.bms.backend.repository.BatteryRepository;
 import com.influxdb.client.InfluxDBClient;
 import com.influxdb.query.FluxRecord;
 import com.influxdb.query.FluxTable;
@@ -31,6 +33,8 @@ public class BatteryDataService {
 
     @Autowired
     private InfluxDBClient influxDBClient;
+    @Autowired
+    private BatteryRepository batteryRepository;
 
     @Value("${influxdb.bucket}")
     private String bucket;
@@ -126,6 +130,14 @@ public class BatteryDataService {
      * 前端只要调用 /api/battery-dashboard/stream 不传 idA/idB，就会走这里。
      */
     public DashboardData getDashboardStreamLatestTwo() {
+        // 优先按台账中“最近记录时间”选择电池，保证大屏展示的是最近一组
+        String[] latestByLedger = pickLatestTwoCellIdsFromLedger();
+        if (latestByLedger != null && latestByLedger[0] != null) {
+            String idA = latestByLedger[0];
+            String idB = latestByLedger[1] != null ? latestByLedger[1] : latestByLedger[0];
+            return getDashboardStream(idA, idB);
+        }
+
         DashboardData data = new DashboardData();
 
         try {
@@ -223,6 +235,26 @@ public class BatteryDataService {
             log.error("❌ 查询 InfluxDB 最新电池失败: {}", e.getMessage());
             data.setTime(timeFormatter.format(Instant.now()));
             return data;
+        }
+    }
+
+    private String[] pickLatestTwoCellIdsFromLedger() {
+        try {
+            List<Battery> list = batteryRepository.findTop2ByDeletedFalseAndLastRecordAtIsNotNullOrderByLastRecordAtDescIdDesc();
+            if (list == null || list.isEmpty()) return null;
+
+            String idA = list.get(0).getBatteryCode();
+            if (idA == null || idA.trim().isEmpty()) return null;
+            idA = idA.trim();
+
+            String idB = null;
+            if (list.size() > 1 && list.get(1).getBatteryCode() != null) {
+                idB = list.get(1).getBatteryCode().trim();
+            }
+            return new String[]{idA, idB};
+        } catch (Exception e) {
+            log.warn("⚠️ 按台账选择最近双通道电池失败，回退 Influx 逻辑: {}", e.getMessage());
+            return null;
         }
     }
 
