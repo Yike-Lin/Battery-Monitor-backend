@@ -25,8 +25,11 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import javax.persistence.criteria.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 电池台账业务
@@ -40,19 +43,24 @@ public class BatteryService {
     private final BatteryRecordRepository batteryRecordRepository;
     private final BatteryCsvUploadRepository batteryCsvUploadRepository;
     private final BatteryCsvService batteryCsvService;
+    private final BatteryDataService batteryDataService;
+
+    private static final Pattern CELL_ID_PATTERN = Pattern.compile("(b\\d+c\\d+)");
 
     public BatteryService(BatteryRepository batteryRepository,
                           BatteryModelRepository batteryModelRepository,
                           CustomerRepository customerRepository,
                           BatteryRecordRepository batteryRecordRepository,
                           BatteryCsvUploadRepository batteryCsvUploadRepository,
-                          BatteryCsvService batteryCsvService){
+                          BatteryCsvService batteryCsvService,
+                          BatteryDataService batteryDataService){
         this.batteryRepository = batteryRepository;
         this.batteryModelRepository = batteryModelRepository;
         this.customerRepository = customerRepository;
         this.batteryRecordRepository = batteryRecordRepository;
         this.batteryCsvUploadRepository = batteryCsvUploadRepository;
         this.batteryCsvService = batteryCsvService;
+        this.batteryDataService = batteryDataService;
     }
 
     /**
@@ -101,9 +109,12 @@ public class BatteryService {
         // 3.调repository查数据库
         Page<Battery> page = batteryRepository.findAll(spec, pageable);
 
+        // 3.1 从 Influx 获取最新电压/温度（按 cell_id）
+        Map<String, BatteryDataService.LatestVt> vtMap = batteryDataService.getLatestVoltageTemperatureByCellId();
+
         // 4.转成DTO
         List<BatteryListItemDto> dtoList = page.getContent().stream()
-                .map(this::toListItemDto)
+                .map(b -> toListItemDto(b, vtMap))
                 .collect(Collectors.toList());
 
         return new PageImpl<>(dtoList , pageable , page.getTotalElements());
@@ -115,6 +126,10 @@ public class BatteryService {
      * @return dto
      */
     private BatteryListItemDto toListItemDto(Battery battery){
+        return toListItemDto(battery, null);
+    }
+
+    private BatteryListItemDto toListItemDto(Battery battery, Map<String, BatteryDataService.LatestVt> vtMap){
         BatteryListItemDto dto = new BatteryListItemDto();
         dto.setId(battery.getId());
         dto.setBatteryCode(battery.getBatteryCode());
@@ -122,8 +137,33 @@ public class BatteryService {
         dto.setCommissioningDate(battery.getCommissioningDate());
         dto.setRatedCapacityAh(battery.getRatedCapacityAh());
         dto.setSohPercent(battery.getSohPercent());
+        dto.setSoc(calculateSocPercent(battery));
+        dto.setRulCycles(estimateRulCycles(battery));
         dto.setCycleCount(battery.getCycleCount());
         dto.setLastRecordAt(battery.getLastRecordAt());
+
+        if (vtMap != null) {
+            String batteryCode = battery.getBatteryCode();
+            BatteryDataService.LatestVt vt = null;
+
+            // 1) 优先按完整 batteryCode 匹配（当前 Influx 写入规则即 cell_id=batteryCode）
+            if (batteryCode != null) {
+                vt = vtMap.get(batteryCode.toLowerCase());
+            }
+
+            // 2) 兼容历史数据：回退匹配提取出的 b1cxx
+            if (vt == null) {
+                String cellId = extractCellId(batteryCode);
+                if (cellId != null) {
+                    vt = vtMap.get(cellId.toLowerCase());
+                }
+            }
+
+            if (vt != null) {
+                dto.setVoltage(BigDecimal.valueOf(vt.getVoltage()).setScale(3, BigDecimal.ROUND_HALF_UP));
+                dto.setTemperature(BigDecimal.valueOf(vt.getTemperature()).setScale(2, BigDecimal.ROUND_HALF_UP));
+            }
+        }
 
         // 处理关联对象：如果电池有型号，就从型号对象中取出modelCode，Copy到DTO的modelCode
         if (battery.getModel() != null) {
@@ -133,6 +173,70 @@ public class BatteryService {
             dto.setCustomerName(battery.getCustomer().getName());
         }
         return dto;
+    }
+
+    private String extractCellId(String batteryCode) {
+        if (batteryCode == null) return null;
+        Matcher m = CELL_ID_PATTERN.matcher(batteryCode.toLowerCase());
+        if (m.find()) return m.group(1);
+        return null;
+    }
+
+    private BigDecimal calculateSocPercent(Battery battery) {
+        if (battery.getRatedCapacityAh() == null || battery.getRatedCapacityAh().doubleValue() <= 0) {
+            return null;
+        }
+        Double latestCapacity = null;
+
+        BatteryRecord latest = batteryRecordRepository
+                .findTopByBatteryIdAndCapacityIsNotNullOrderByCycleDescTimeMinDesc(battery.getId())
+                .orElse(null);
+        if (latest != null && latest.getCapacity() != null) {
+            latestCapacity = latest.getCapacity();
+        } else {
+            // 兜底：若 battery_record 没有容量，尝试从 CSV 生命周期读取最后容量
+            List<LifecyclePointDto> lifecycle = batteryCsvService.getLifecycleCapacityTrend(battery.getId());
+            if (lifecycle != null && !lifecycle.isEmpty()) {
+                LifecyclePointDto last = lifecycle.get(lifecycle.size() - 1);
+                latestCapacity = last.getCapacityAh();
+            }
+        }
+
+        if (latestCapacity == null) {
+            return null;
+        }
+
+        double rated = battery.getRatedCapacityAh().doubleValue();
+        double soc = latestCapacity / rated * 100.0;
+        soc = Math.max(0.0, Math.min(100.0, soc));
+        return BigDecimal.valueOf(soc).setScale(2, BigDecimal.ROUND_HALF_UP);
+    }
+
+    /**
+     * 简化版 RUL 估算：以 SOH=70% 作为 EOL，按当前衰减斜率线性外推剩余循环数。
+     * - 若 SOH <= 70，返回 0
+     * - 缺少 SOH 或 cycleCount，则返回 null
+     */
+    private Integer estimateRulCycles(Battery battery) {
+        if (battery.getSohPercent() == null || battery.getCycleCount() == null) {
+            return null;
+        }
+        double soh = battery.getSohPercent().doubleValue();
+        int cycle = battery.getCycleCount();
+        if (soh <= 70.0) {
+            return 0;
+        }
+        if (cycle <= 0) {
+            return null;
+        }
+        // 假设初始 SOH=100%，平均衰减率=(100-soh)/cycle
+        double fadePerCycle = (100.0 - soh) / cycle;
+        if (fadePerCycle <= 1e-9) {
+            return null;
+        }
+        double remaining = (soh - 70.0) / fadePerCycle;
+        if (remaining < 0) return 0;
+        return (int) Math.round(remaining);
     }
 
 
