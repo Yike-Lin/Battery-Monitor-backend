@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface BatteryRecordRepository extends JpaRepository<BatteryRecord , Long> {
 
@@ -29,5 +30,8 @@ public interface BatteryRecordRepository extends JpaRepository<BatteryRecord , L
 
     // 按电池ID + 单个cycle查询（按timeMin升序，画曲线用）
     List<BatteryRecord> findByBatteryIdAndCycleOrderByTimeMinAsc(Long batteryId , Integer cycle);
+
+    // 查询某电池最新一条记录（先按 cycle 倒序，再按 timeMin 倒序）
+    Optional<BatteryRecord> findTopByBatteryIdOrderByCycleDescTimeMinDesc(Long batteryId);
 
 }
