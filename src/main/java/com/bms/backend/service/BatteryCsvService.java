@@ -337,7 +337,6 @@ public class BatteryCsvService {
                         String colName = parts[i].trim();
                         headerIndex.put(colName, i);
                     }
-                    System.out.println("Lifecycle header index: " + headerIndex);
                     continue;
                 }
 
