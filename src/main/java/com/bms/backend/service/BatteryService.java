@@ -6,6 +6,7 @@ import com.bms.backend.dto.BatteryListQuery;
 import com.bms.backend.dto.LifecyclePointDto;
 import com.bms.backend.dto.SohErrorDto;
 import com.bms.backend.entity.Battery;
+import com.bms.backend.entity.BatteryCsvUpload;
 import com.bms.backend.entity.BatteryModel;
 import com.bms.backend.entity.BatteryRecord;
 import com.bms.backend.entity.Customer;
@@ -422,6 +423,31 @@ public class BatteryService {
             dto.setReason("ok");
         }
         return dto;
+    }
+
+    /**
+     * 重新计算并回写 SOH（基于最新绑定 CSV）
+     */
+    @Transactional
+    public BatteryListItemDto recalculateSoh(Long id) {
+        Battery battery = batteryRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("电池不存在, id = " + id));
+        if (Boolean.TRUE.equals(battery.getDeleted())) {
+            throw new BusinessException("该电池已被删除，无法重算 SOH");
+        }
+
+        BatteryCsvUpload upload = batteryCsvUploadRepository
+                .findTopByBatteryIdOrderByUsedAtDesc(id)
+                .orElseThrow(() -> new BusinessException("该电池没有关联的上传记录，无法重算 SOH"));
+
+        Double sohPredict = batteryCsvService.predictSohByUploadToken(upload.getUploadToken());
+        if (sohPredict == null) {
+            throw new BusinessException("SOH 重算失败：预测结果为空");
+        }
+
+        battery.setSohPercent(BigDecimal.valueOf(sohPredict).multiply(BigDecimal.valueOf(100)));
+        Battery saved = batteryRepository.save(battery);
+        return toListItemDto(saved);
     }
 }
 
