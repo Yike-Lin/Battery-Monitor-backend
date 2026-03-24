@@ -2,6 +2,9 @@ package com.bms.backend.dto;
 
 import lombok.Data;
 
+/**
+ * SohErrorDto 用于存储SOH误差信息
+ */
 @Data
 public class SohErrorDto {
     private Long batteryId;
@@ -13,4 +16,6 @@ public class SohErrorDto {
     private Double trueSoh;
     private Double absError;
     private Double apePercent;
+    private Boolean calculable;
+    private String reason;
 }
