@@ -8,6 +8,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * BatteryRecordRepository 用于操作电池记录
+ */
 public interface BatteryRecordRepository extends JpaRepository<BatteryRecord , Long> {
 
     // 按电池ID 查询所有记录（分页）
@@ -33,5 +36,8 @@ public interface BatteryRecordRepository extends JpaRepository<BatteryRecord , L
 
     // 查询某电池最新一条记录（先按 cycle 倒序，再按 timeMin 倒序）
     Optional<BatteryRecord> findTopByBatteryIdOrderByCycleDescTimeMinDesc(Long batteryId);
+
+    // 查询某电池最新一条容量不为空的记录
+    Optional<BatteryRecord> findTopByBatteryIdAndCapacityIsNotNullOrderByCycleDescTimeMinDesc(Long batteryId);
 
 }
