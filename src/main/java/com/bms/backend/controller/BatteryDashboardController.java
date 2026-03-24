@@ -1,5 +1,6 @@
 package com.bms.backend.controller;
 
+import com.bms.backend.dto.IcAnalysisResponse;
 import com.bms.backend.entity.DashboardData;
 import com.bms.backend.service.BatteryDataService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,5 +25,15 @@ public class BatteryDashboardController {
             return batteryDataService.getDashboardStreamLatestTwo();
         }
         return batteryDataService.getDashboardStream(idA, idB);
+    }
+
+    @GetMapping("/ic")
+    public IcAnalysisResponse getIc(
+            @RequestParam String cellId,
+            @RequestParam(required = false) Integer refCycle,
+            @RequestParam(required = false) Integer currCycle,
+            @RequestParam(required = false, defaultValue = "5") Integer smooth
+    ) {
+        return batteryDataService.getIcAnalysis(cellId, refCycle, currCycle, smooth == null ? 5 : smooth);
     }
 }
