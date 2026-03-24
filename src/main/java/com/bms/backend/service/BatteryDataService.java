@@ -13,7 +13,9 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class BatteryDataService {
@@ -217,6 +219,49 @@ public class BatteryDataService {
         }
     }
 
+    /**
+     * 获取所有 cell_id 的最新电压/温度（来自 InfluxDB measurement=battery_metrics）。
+     * 说明：temperature 字段名由模拟/导入数据写入，非 Temp。
+     */
+    public Map<String, LatestVt> getLatestVoltageTemperatureByCellId() {
+        Map<String, LatestVt> map = new HashMap<>();
+        String query = String.format(
+                "from(bucket: \"%s\") " +
+                        "|> range(start: -180d) " +
+                        "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
+                        "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"temperature\") " +
+                        "|> group(columns: [\"cell_id\", \"_field\"]) " +
+                        "|> last() " +
+                        "|> keep(columns: [\"cell_id\", \"_field\", \"_value\", \"_time\"])",
+                bucket
+        );
+
+        try {
+            List<FluxTable> tables = influxDBClient.getQueryApi().query(query, org);
+            for (FluxTable table : tables) {
+                for (FluxRecord record : table.getRecords()) {
+                    String cellId = (String) record.getValueByKey("cell_id");
+                    if (cellId == null) continue;
+                    String field = String.valueOf(record.getValueByKey("_field"));
+                    LatestVt vt = map.computeIfAbsent(cellId.toLowerCase(), k -> new LatestVt());
+                    if ("voltage".equals(field)) {
+                        vt.setVoltage(getDoubleValue(record.getValue()));
+                    } else if ("temperature".equals(field)) {
+                        vt.setTemperature(getDoubleValue(record.getValue()));
+                    }
+                    if (record.getTime() != null) {
+                        if (vt.getTime() == null || record.getTime().isAfter(vt.getTime())) {
+                            vt.setTime(record.getTime());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 InfluxDB 最新 voltage/temperature 失败: {}", e.getMessage());
+        }
+        return map;
+    }
+
     // 辅安全转 Double
     private double getDoubleValue(Object value) {
         if (value == null) return 0.0;
@@ -224,5 +269,35 @@ public class BatteryDataService {
             return ((Number) value).doubleValue();
         }
         return 0.0;
+    }
+
+    public static class LatestVt {
+        private double voltage;
+        private double temperature;
+        private Instant time;
+
+        public double getVoltage() {
+            return voltage;
+        }
+
+        public void setVoltage(double voltage) {
+            this.voltage = voltage;
+        }
+
+        public double getTemperature() {
+            return temperature;
+        }
+
+        public void setTemperature(double temperature) {
+            this.temperature = temperature;
+        }
+
+        public Instant getTime() {
+            return time;
+        }
+
+        public void setTime(Instant time) {
+            this.time = time;
+        }
     }
 }
