@@ -25,6 +25,14 @@ public class BatteryListItemDto {
     private BigDecimal ratedCapacityAh;
     // SOH
     private BigDecimal sohPercent;
+    // SOC (%)
+    private BigDecimal soc;
+    // 最新电压 (V) - 来自 Influx
+    private BigDecimal voltage;
+    // 最新温度 (°C) - 来自 Influx，字段名 temperature
+    private BigDecimal temperature;
+    // 剩余寿命估算 (cycles, 到 SOH=70%)
+    private Integer rulCycles;
     // 循环数
     private Integer cycleCount;
     // 最近记录时间
