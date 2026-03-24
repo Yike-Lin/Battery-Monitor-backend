@@ -1,5 +1,7 @@
 package com.bms.backend.service;
 
+import com.bms.backend.dto.IcAnalysisResponse;
+import com.bms.backend.dto.IcPointDto;
 import com.bms.backend.entity.DashboardData;
 import com.influxdb.client.InfluxDBClient;
 import com.influxdb.query.FluxRecord;
@@ -13,9 +15,14 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class BatteryDataService {
@@ -299,5 +306,194 @@ public class BatteryDataService {
         public void setTime(Instant time) {
             this.time = time;
         }
+    }
+
+    public IcAnalysisResponse getIcAnalysis(String cellId, Integer refCycle, Integer currCycle, int smoothWindow) {
+        IcAnalysisResponse resp = new IcAnalysisResponse();
+        resp.setCellId(cellId);
+        if (cellId == null || cellId.trim().isEmpty()) {
+            return resp;
+        }
+
+        List<Integer> cycles = queryAvailableCycles(cellId);
+        if (cycles.isEmpty()) {
+            return resp;
+        }
+        int defaultRef = cycles.get(0);
+        int defaultCurr = cycles.get(cycles.size() - 1);
+        int finalRef = refCycle != null ? refCycle : defaultRef;
+        int finalCurr = currCycle != null ? currCycle : defaultCurr;
+        resp.setRefCycle(finalRef);
+        resp.setCurrCycle(finalCurr);
+
+        List<IcPointDto> ref = calculateIcCurve(cellId, finalRef, smoothWindow);
+        List<IcPointDto> curr = calculateIcCurve(cellId, finalCurr, smoothWindow);
+        resp.setRefCurve(ref);
+        resp.setCurrCurve(curr);
+
+        if (!ref.isEmpty() && !curr.isEmpty()) {
+            IcPointDto refPeak = ref.stream().max(Comparator.comparing(IcPointDto::getDqdv)).orElse(null);
+            IcPointDto currPeak = curr.stream().max(Comparator.comparing(IcPointDto::getDqdv)).orElse(null);
+            if (refPeak != null && currPeak != null) {
+                resp.setPeakShift(currPeak.getVoltage() - refPeak.getVoltage());
+                if (refPeak.getDqdv() != null && Math.abs(refPeak.getDqdv()) > 1e-9) {
+                    resp.setPeakDropPercent((refPeak.getDqdv() - currPeak.getDqdv()) / refPeak.getDqdv() * 100.0);
+                }
+            }
+        }
+        return resp;
+    }
+
+    private List<Integer> queryAvailableCycles(String cellId) {
+        Set<Integer> cycleSet = new HashSet<>();
+        String query = String.format(
+                "from(bucket: \"%s\") " +
+                        "|> range(start: -365d) " +
+                        "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
+                        "|> filter(fn: (r) => r[\"cell_id\"] == \"%s\") " +
+                        "|> filter(fn: (r) => r[\"_field\"] == \"capacity\") " +
+                        "|> group(columns: [\"cycle_index\"]) " +
+                        "|> last() " +
+                        "|> keep(columns: [\"cycle_index\"])",
+                bucket, cellId
+        );
+        try {
+            List<FluxTable> tables = influxDBClient.getQueryApi().query(query, org);
+            for (FluxTable table : tables) {
+                for (FluxRecord record : table.getRecords()) {
+                    Object raw = record.getValueByKey("cycle_index");
+                    if (raw == null) continue;
+                    try {
+                        cycleSet.add(Integer.parseInt(String.valueOf(raw)));
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 cycle_index 失败: {}", e.getMessage());
+        }
+        return cycleSet.stream().sorted().collect(Collectors.toList());
+    }
+
+    private List<IcPointDto> calculateIcCurve(String cellId, int cycle, int smoothWindow) {
+        List<double[]> points = queryVoltageCapacityPoints(cellId, cycle);
+        if (points.size() < 3) return new ArrayList<>();
+
+        List<IcPointDto> raw = new ArrayList<>();
+        for (int i = 1; i < points.size(); i++) {
+            double v1 = points.get(i - 1)[0];
+            double q1 = points.get(i - 1)[1];
+            double v2 = points.get(i)[0];
+            double q2 = points.get(i)[1];
+            double dv = v2 - v1;
+            if (Math.abs(dv) < 1e-6) continue;
+            double dqdv = (q2 - q1) / dv;
+            if (Double.isNaN(dqdv) || Double.isInfinite(dqdv)) continue;
+            dqdv = Math.max(-50, Math.min(50, dqdv));
+            raw.add(new IcPointDto((v1 + v2) / 2.0, dqdv));
+        }
+        List<IcPointDto> smoothed = smoothIc(raw, Math.max(1, smoothWindow));
+        smoothed.sort(Comparator.comparingDouble(p -> p.getVoltage() == null ? 0.0 : p.getVoltage()));
+        return smoothed;
+    }
+
+    private List<double[]> queryVoltageCapacityPoints(String cellId, int cycle) {
+        class Row {
+            Instant t;
+            Double v;
+            Double c;
+            Double qCap;
+        }
+        List<Row> rows = new ArrayList<>();
+        String query = String.format(
+                "from(bucket: \"%s\") " +
+                        "|> range(start: -365d) " +
+                        "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
+                        "|> filter(fn: (r) => r[\"cell_id\"] == \"%s\") " +
+                        "|> filter(fn: (r) => r[\"cycle_index\"] == \"%d\") " +
+                        "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"capacity\" or r[\"_field\"] == \"current\") " +
+                        "|> pivot(rowKey:[\"_time\"], columnKey:[\"_field\"], valueColumn:\"_value\") " +
+                        "|> keep(columns:[\"_time\", \"voltage\", \"capacity\", \"current\"]) " +
+                        "|> sort(columns:[\"_time\"])",
+                bucket, cellId, cycle
+        );
+        try {
+            List<FluxTable> tables = influxDBClient.getQueryApi().query(query, org);
+            for (FluxTable table : tables) {
+                for (FluxRecord record : table.getRecords()) {
+                    Object vRaw = record.getValueByKey("voltage");
+                    Object cRaw = record.getValueByKey("current");
+                    Object qRaw = record.getValueByKey("capacity");
+                    if (vRaw == null || cRaw == null || record.getTime() == null) continue;
+                    Row row = new Row();
+                    row.t = record.getTime();
+                    row.v = getDoubleValue(vRaw);
+                    row.c = getDoubleValue(cRaw);
+                    row.qCap = qRaw == null ? null : getDoubleValue(qRaw);
+                    if (row.v == null || row.v <= 0 || Double.isNaN(row.v) || Double.isInfinite(row.v)) continue;
+                    rows.add(row);
+                }
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 IC 原始点失败 cellId={}, cycle={}, err={}", cellId, cycle, e.getMessage());
+        }
+        rows.sort(Comparator.comparing(r -> r.t));
+        if (rows.size() < 2) return new ArrayList<>();
+
+        // 如果 capacity 在该 cycle 内有变化，则优先用 capacity；否则退化为电流积分得到 Q(t)
+        boolean hasCapTrend = false;
+        Double firstCap = null;
+        for (Row r : rows) {
+            if (r.qCap == null || Double.isNaN(r.qCap) || Double.isInfinite(r.qCap)) continue;
+            if (firstCap == null) firstCap = r.qCap;
+            if (firstCap != null && Math.abs(r.qCap - firstCap) > 1e-6) {
+                hasCapTrend = true;
+                break;
+            }
+        }
+
+        List<double[]> list = new ArrayList<>();
+        if (hasCapTrend) {
+            for (Row r : rows) {
+                if (r.qCap == null || Double.isNaN(r.qCap) || Double.isInfinite(r.qCap)) continue;
+                list.add(new double[]{r.v, r.qCap});
+            }
+            return list;
+        }
+
+        double qAh = 0.0;
+        list.add(new double[]{rows.get(0).v, qAh});
+        for (int i = 1; i < rows.size(); i++) {
+            Row prev = rows.get(i - 1);
+            Row curr = rows.get(i);
+            long dtMs = curr.t.toEpochMilli() - prev.t.toEpochMilli();
+            if (dtMs <= 0) continue;
+            double dtHour = dtMs / 3600000.0;
+            double iAvg = (Math.abs(prev.c) + Math.abs(curr.c)) / 2.0;
+            qAh += iAvg * dtHour;
+            list.add(new double[]{curr.v, qAh});
+        }
+        return list;
+    }
+
+    private List<IcPointDto> smoothIc(List<IcPointDto> src, int window) {
+        if (window <= 1 || src.size() <= 2) return src;
+        List<IcPointDto> out = new ArrayList<>(src.size());
+        int half = window / 2;
+        for (int i = 0; i < src.size(); i++) {
+            int l = Math.max(0, i - half);
+            int r = Math.min(src.size() - 1, i + half);
+            double sum = 0.0;
+            int n = 0;
+            for (int j = l; j <= r; j++) {
+                if (src.get(j).getDqdv() != null) {
+                    sum += src.get(j).getDqdv();
+                    n++;
+                }
+            }
+            double avg = n > 0 ? sum / n : 0.0;
+            out.add(new IcPointDto(src.get(i).getVoltage(), avg));
+        }
+        return out;
     }
 }
