@@ -112,5 +112,13 @@ public class BatteryController {
         return batteryService.getBatteryDetail(id);
     }
 
+    /**
+     * 查看 SOH 预测误差（已入库电池）
+     */
+    @GetMapping("/{id}/soh-error")
+    public SohErrorDto getSohError(@PathVariable Long id) {
+        return batteryService.getSohError(id);
+    }
+
 
 }
