@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.util.Optional;
+import java.util.List;
 
 public interface BatteryRepository
         extends JpaRepository<Battery, Long>, JpaSpecificationExecutor<Battery> {
@@ -19,4 +20,7 @@ public interface BatteryRepository
 
     // 获取最新电池：按ID倒序排列取第一条
     Optional<Battery> findTopByOrderByIdDesc();
+
+    // 大屏优先使用：按最近记录时间取最新两组电池
+    List<Battery> findTop2ByDeletedFalseAndLastRecordAtIsNotNullOrderByLastRecordAtDescIdDesc();
 }
