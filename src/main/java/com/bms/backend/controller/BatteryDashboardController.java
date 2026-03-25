@@ -1,10 +1,13 @@
 package com.bms.backend.controller;
 
 import com.bms.backend.dto.IcAnalysisResponse;
+import com.bms.backend.dto.TopologySnapshotDto;
 import com.bms.backend.entity.DashboardData;
 import com.bms.backend.service.BatteryDataService;
+import com.bms.backend.service.TopologySnapshotService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/battery-dashboard")
@@ -13,6 +16,8 @@ public class BatteryDashboardController {
 
     @Autowired
     private BatteryDataService batteryDataService;
+    @Autowired
+    private TopologySnapshotService topologySnapshotService;
 
     // 前端调用地址: GET /api/battery/stream
     @GetMapping("/stream")
@@ -35,5 +40,19 @@ public class BatteryDashboardController {
             @RequestParam(required = false, defaultValue = "5") Integer smooth
     ) {
         return batteryDataService.getIcAnalysis(cellId, refCycle, currCycle, smooth == null ? 5 : smooth);
+    }
+
+    @GetMapping("/topology/snapshot")
+    public TopologySnapshotDto getTopologySnapshot(
+            @RequestParam(required = false) String packId
+    ) {
+        return topologySnapshotService.getSnapshot(packId);
+    }
+
+    @GetMapping("/topology/stream")
+    public SseEmitter getTopologyStream(
+            @RequestParam(required = false) String packId
+    ) {
+        return topologySnapshotService.subscribe(packId);
     }
 }
