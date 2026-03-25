@@ -35,6 +35,8 @@ public class BatteryDataService {
     private InfluxDBClient influxDBClient;
     @Autowired
     private BatteryRepository batteryRepository;
+    @Autowired
+    private RealtimeSignalFilterService signalFilterService;
 
     @Value("${influxdb.bucket}")
     private String bucket;
@@ -91,6 +93,13 @@ public class BatteryDataService {
                     // 安全获取数值 (防止 null 或类型转换错误)
                     double v = getDoubleValue(record.getValueByKey("voltage"));
                     double c = getDoubleValue(record.getValueByKey("current"));
+                    final double vRaw = v;
+                    final double cRaw = c;
+                    if (cellId != null) {
+                        String ck = cellId.toLowerCase();
+                        v = signalFilterService.smoothVoltageReading(ck, v);
+                        c = signalFilterService.smoothCurrentReading(ck, c);
+                    }
 
                     // 记录最新的时间戳 (用于X轴)
                     if (record.getTime() != null) {
@@ -101,11 +110,13 @@ public class BatteryDataService {
 
                     // --- 核心映射逻辑 ---
                     if (idA.equals(cellId)) {
-                        // 如果读到的是 b1c0，填入 Pack A
+                        data.setVaRaw(vRaw);
+                        data.setCaRaw(cRaw);
                         data.setVa(v);
                         data.setCa(c);
                     } else if (idB.equals(cellId)) {
-                        // 如果读到的是 b1c1，填入 Pack B
+                        data.setVbRaw(vRaw);
+                        data.setCbRaw(cRaw);
                         data.setVb(v);
                         data.setCb(c);
                     }
@@ -217,6 +228,13 @@ public class BatteryDataService {
 
                     double v = getDoubleValue(record.getValueByKey("voltage"));
                     double c = getDoubleValue(record.getValueByKey("current"));
+                    final double vRaw = v;
+                    final double cRaw = c;
+                    if (cellId != null) {
+                        String ck = cellId.toLowerCase();
+                        v = signalFilterService.smoothVoltageReading(ck, v);
+                        c = signalFilterService.smoothCurrentReading(ck, c);
+                    }
 
                     if (record.getTime() != null) {
                         if (latestTime == null || record.getTime().isAfter(latestTime)) {
@@ -225,9 +243,13 @@ public class BatteryDataService {
                     }
 
                     if (idA.equals(cellId)) {
+                        data.setVaRaw(vRaw);
+                        data.setCaRaw(cRaw);
                         data.setVa(v);
                         data.setCa(c);
                     } else if (idB.equals(cellId)) {
+                        data.setVbRaw(vRaw);
+                        data.setCbRaw(cRaw);
                         data.setVb(v);
                         data.setCb(c);
                     }
