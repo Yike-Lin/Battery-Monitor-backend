@@ -23,4 +23,7 @@ public interface BatteryRepository
 
     // 大屏优先使用：按最近记录时间取最新两组电池
     List<Battery> findTop2ByDeletedFalseAndLastRecordAtIsNotNullOrderByLastRecordAtDescIdDesc();
+
+    // 拓扑快照：查询全部在库电池
+    List<Battery> findByDeletedFalse();
 }
