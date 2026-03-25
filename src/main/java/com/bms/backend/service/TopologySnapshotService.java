@@ -22,11 +22,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * PACK 拓扑矩阵监控实时后端引擎
+ * 拓扑矩阵监控数据包括电池的电压、温度、电流等参数，以及电池的拓扑矩阵监控数据。
+ */
 @Service
 public class TopologySnapshotService {
 
     private final BatteryRepository batteryRepository;
     private final BatteryDataService batteryDataService;
+    private final RealtimeSignalFilterService signalFilterService;
     private final AtomicReference<Map<String, TopologySnapshotDto>> latestByPack =
             new AtomicReference<>(Collections.emptyMap());
 
@@ -37,16 +42,19 @@ public class TopologySnapshotService {
     private static final int GRID_COLS = 8;
 
     public TopologySnapshotService(BatteryRepository batteryRepository,
-                                   BatteryDataService batteryDataService) {
+                                   BatteryDataService batteryDataService,
+                                   RealtimeSignalFilterService signalFilterService) {
         this.batteryRepository = batteryRepository;
         this.batteryDataService = batteryDataService;
+        this.signalFilterService = signalFilterService;
     }
 
     @Scheduled(fixedDelay = 1000, initialDelay = 1500)
     public void refreshSnapshot() {
         boolean stale = false;
         try {
-            Map<String, BatteryDataService.LatestVtc> vtcByCell = batteryDataService.getLatestVtcByCellId();
+            Map<String, BatteryDataService.LatestVtc> vtcByCell =
+                    signalFilterService.smoothVtcMap(batteryDataService.getLatestVtcByCellId());
             List<Battery> batteries = batteryRepository.findByDeletedFalse();
             Map<String, List<Battery>> byPack = batteries.stream()
                     .filter(b -> b.getBatteryCode() != null && !b.getBatteryCode().trim().isEmpty())
