@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 实时量测在线平滑：按 cell_id（小写）分片状态，供多线程读场景下合并一次 Influx 查询后复用。
+ * 实时量测在线平滑：按 cell_id分片状态，供多线程读场景下合并一次 Influx 查询后复用。
  * 实现为 EMA + 可选阶跃限幅；长时间无采样则冷启动，避免旧状态拖尾。
  */
 @Service

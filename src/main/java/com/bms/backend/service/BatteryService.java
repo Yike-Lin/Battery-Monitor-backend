@@ -26,6 +26,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import javax.persistence.criteria.Predicate;
 import java.util.regex.Matcher;
@@ -109,12 +110,11 @@ public class BatteryService {
                 Sort.by(Sort.Direction.DESC , "lastRecordAt")
         );
 
-        // 3.调repository查数据库
+        // 3. Influx 与 DB 并行，缩短列表接口总耗时
+        CompletableFuture<Map<String, BatteryDataService.LatestVt>> vtFuture = CompletableFuture.supplyAsync(() ->
+                signalFilterService.smoothVtMap(batteryDataService.getLatestVoltageTemperatureByCellId()));
         Page<Battery> page = batteryRepository.findAll(spec, pageable);
-
-        // 3.1 从 Influx 获取最新电压/温度（按 cell_id）
-        Map<String, BatteryDataService.LatestVt> vtMap =
-                signalFilterService.smoothVtMap(batteryDataService.getLatestVoltageTemperatureByCellId());
+        Map<String, BatteryDataService.LatestVt> vtMap = vtFuture.join();
 
         // 4.转成DTO
         List<BatteryListItemDto> dtoList = page.getContent().stream()

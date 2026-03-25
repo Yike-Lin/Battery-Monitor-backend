@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -43,6 +44,15 @@ public class BatteryDataService {
 
     @Value("${influxdb.org}")
     private String org;
+
+    @Value("${bms.influx.latest-range:-30d}")
+    private String influxLatestRange;
+
+    /** 与拓扑共用同一份 Influx 最新点，避免列表与 @Scheduled 各打一遍 */
+    private volatile long latestVtcCacheAtMs = 0L;
+    private volatile Map<String, LatestVtc> latestVtcCache = Collections.emptyMap();
+    private final Object latestVtcCacheLock = new Object();
+    private static final long LATEST_VTC_CACHE_TTL_MS = 2000L;
 
     // 时间格式化器：转成前端需要的 "HH:mm:ss"
     private final DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -93,12 +103,14 @@ public class BatteryDataService {
                     // 安全获取数值 (防止 null 或类型转换错误)
                     double v = getDoubleValue(record.getValueByKey("voltage"));
                     double c = getDoubleValue(record.getValueByKey("current"));
+                    // 原始电压和电流
                     final double vRaw = v;
                     final double cRaw = c;
+                    // 平滑电压和电流
                     if (cellId != null) {
                         String ck = cellId.toLowerCase();
-                        v = signalFilterService.smoothVoltageReading(ck, v);
-                        c = signalFilterService.smoothCurrentReading(ck, c);
+                        v = signalFilterService.smoothVoltageReading(ck, vRaw);
+                        c = signalFilterService.smoothCurrentReading(ck, cRaw);
                     }
 
                     // 记录最新的时间戳 (用于X轴)
@@ -228,8 +240,10 @@ public class BatteryDataService {
 
                     double v = getDoubleValue(record.getValueByKey("voltage"));
                     double c = getDoubleValue(record.getValueByKey("current"));
+                    // 原始电压和电流
                     final double vRaw = v;
                     final double cRaw = c;
+                    // 平滑电压和电流
                     if (cellId != null) {
                         String ck = cellId.toLowerCase();
                         v = signalFilterService.smoothVoltageReading(ck, v);
@@ -286,62 +300,53 @@ public class BatteryDataService {
     }
 
     /**
-     * 获取所有 cell_id 的最新电压/温度（来自 InfluxDB measurement=battery_metrics）。
-     * 说明：temperature 字段名由模拟/导入数据写入，非 Temp。
+     * 获取所有 cell_id 的最新电压/温度（与 {@link #getLatestVtcByCellId()} 共用缓存与一次 Influx 查询）。
      */
     public Map<String, LatestVt> getLatestVoltageTemperatureByCellId() {
-        Map<String, LatestVt> map = new HashMap<>();
-        String query = String.format(
-                "from(bucket: \"%s\") " +
-                        "|> range(start: -180d) " +
-                        "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
-                        "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"temperature\") " +
-                        "|> group(columns: [\"cell_id\", \"_field\"]) " +
-                        "|> last() " +
-                        "|> keep(columns: [\"cell_id\", \"_field\", \"_value\", \"_time\"])",
-                bucket
-        );
-
-        try {
-            List<FluxTable> tables = influxDBClient.getQueryApi().query(query, org);
-            for (FluxTable table : tables) {
-                for (FluxRecord record : table.getRecords()) {
-                    String cellId = (String) record.getValueByKey("cell_id");
-                    if (cellId == null) continue;
-                    String field = String.valueOf(record.getValueByKey("_field"));
-                    LatestVt vt = map.computeIfAbsent(cellId.toLowerCase(), k -> new LatestVt());
-                    if ("voltage".equals(field)) {
-                        vt.setVoltage(getDoubleValue(record.getValue()));
-                    } else if ("temperature".equals(field)) {
-                        vt.setTemperature(getDoubleValue(record.getValue()));
-                    }
-                    if (record.getTime() != null) {
-                        if (vt.getTime() == null || record.getTime().isAfter(vt.getTime())) {
-                            vt.setTime(record.getTime());
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.error("❌ 查询 InfluxDB 最新 voltage/temperature 失败: {}", e.getMessage());
+        Map<String, LatestVtc> vtc = getLatestVtcByCellId();
+        Map<String, LatestVt> map = new HashMap<>(Math.max(16, vtc.size() * 2));
+        for (Map.Entry<String, LatestVtc> e : vtc.entrySet()) {
+            LatestVtc z = e.getValue();
+            LatestVt vt = new LatestVt();
+            vt.setVoltage(z.getVoltage());
+            vt.setTemperature(z.getTemperature());
+            vt.setTime(z.getTime());
+            map.put(e.getKey(), vt);
         }
         return map;
     }
 
     /**
-     * 获取所有 cell_id 的最新电压/温度/电流，用于拓扑快照聚合。
+     * 获取所有 cell_id 的最新电压/温度/电流（拓扑快照）；短时缓存避免与电池列表连续重复查 Influx。
      */
     public Map<String, LatestVtc> getLatestVtcByCellId() {
+        long now = System.currentTimeMillis();
+        if (now - latestVtcCacheAtMs < LATEST_VTC_CACHE_TTL_MS) {
+            return new HashMap<>(latestVtcCache);
+        }
+        synchronized (latestVtcCacheLock) {
+            if (System.currentTimeMillis() - latestVtcCacheAtMs < LATEST_VTC_CACHE_TTL_MS) {
+                return new HashMap<>(latestVtcCache);
+            }
+            Map<String, LatestVtc> fresh = fetchLatestVtcMapFromInflux();
+            latestVtcCache = fresh;
+            latestVtcCacheAtMs = System.currentTimeMillis();
+            return new HashMap<>(fresh);
+        }
+    }
+
+    private Map<String, LatestVtc> fetchLatestVtcMapFromInflux() {
         Map<String, LatestVtc> map = new HashMap<>();
         String query = String.format(
                 "from(bucket: \"%s\") " +
-                        "|> range(start: -180d) " +
+                        "|> range(start: %s) " +
                         "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
                         "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"temperature\" or r[\"_field\"] == \"current\") " +
                         "|> group(columns: [\"cell_id\", \"_field\"]) " +
                         "|> last() " +
                         "|> keep(columns: [\"cell_id\", \"_field\", \"_value\", \"_time\"])",
-                bucket
+                bucket,
+                influxLatestRange
         );
 
         try {
