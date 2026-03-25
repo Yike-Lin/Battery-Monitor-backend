@@ -306,6 +306,50 @@ public class BatteryDataService {
         return map;
     }
 
+    /**
+     * 获取所有 cell_id 的最新电压/温度/电流，用于拓扑快照聚合。
+     */
+    public Map<String, LatestVtc> getLatestVtcByCellId() {
+        Map<String, LatestVtc> map = new HashMap<>();
+        String query = String.format(
+                "from(bucket: \"%s\") " +
+                        "|> range(start: -180d) " +
+                        "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
+                        "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"temperature\" or r[\"_field\"] == \"current\") " +
+                        "|> group(columns: [\"cell_id\", \"_field\"]) " +
+                        "|> last() " +
+                        "|> keep(columns: [\"cell_id\", \"_field\", \"_value\", \"_time\"])",
+                bucket
+        );
+
+        try {
+            List<FluxTable> tables = influxDBClient.getQueryApi().query(query, org);
+            for (FluxTable table : tables) {
+                for (FluxRecord record : table.getRecords()) {
+                    String cellId = (String) record.getValueByKey("cell_id");
+                    if (cellId == null) continue;
+                    String field = String.valueOf(record.getValueByKey("_field"));
+                    LatestVtc vtc = map.computeIfAbsent(cellId.toLowerCase(), k -> new LatestVtc());
+                    if ("voltage".equals(field)) {
+                        vtc.setVoltage(getDoubleValue(record.getValue()));
+                    } else if ("temperature".equals(field)) {
+                        vtc.setTemperature(getDoubleValue(record.getValue()));
+                    } else if ("current".equals(field)) {
+                        vtc.setCurrent(getDoubleValue(record.getValue()));
+                    }
+                    if (record.getTime() != null) {
+                        if (vtc.getTime() == null || record.getTime().isAfter(vtc.getTime())) {
+                            vtc.setTime(record.getTime());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("❌ 查询 InfluxDB 最新 voltage/temperature/current 失败: {}", e.getMessage());
+        }
+        return map;
+    }
+
     // 辅安全转 Double
     private double getDoubleValue(Object value) {
         if (value == null) return 0.0;
@@ -334,6 +378,45 @@ public class BatteryDataService {
 
         public void setTemperature(double temperature) {
             this.temperature = temperature;
+        }
+
+        public Instant getTime() {
+            return time;
+        }
+
+        public void setTime(Instant time) {
+            this.time = time;
+        }
+    }
+
+    public static class LatestVtc {
+        private double voltage;
+        private double temperature;
+        private double current;
+        private Instant time;
+
+        public double getVoltage() {
+            return voltage;
+        }
+
+        public void setVoltage(double voltage) {
+            this.voltage = voltage;
+        }
+
+        public double getTemperature() {
+            return temperature;
+        }
+
+        public void setTemperature(double temperature) {
+            this.temperature = temperature;
+        }
+
+        public double getCurrent() {
+            return current;
+        }
+
+        public void setCurrent(double current) {
+            this.current = current;
         }
 
         public Instant getTime() {
