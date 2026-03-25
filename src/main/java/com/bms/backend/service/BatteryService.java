@@ -44,6 +44,7 @@ public class BatteryService {
     private final BatteryCsvUploadRepository batteryCsvUploadRepository;
     private final BatteryCsvService batteryCsvService;
     private final BatteryDataService batteryDataService;
+    private final RealtimeSignalFilterService signalFilterService;
 
     private static final Pattern CELL_ID_PATTERN = Pattern.compile("(b\\d+c\\d+)");
 
@@ -53,7 +54,8 @@ public class BatteryService {
                           BatteryRecordRepository batteryRecordRepository,
                           BatteryCsvUploadRepository batteryCsvUploadRepository,
                           BatteryCsvService batteryCsvService,
-                          BatteryDataService batteryDataService){
+                          BatteryDataService batteryDataService,
+                          RealtimeSignalFilterService signalFilterService) {
         this.batteryRepository = batteryRepository;
         this.batteryModelRepository = batteryModelRepository;
         this.customerRepository = customerRepository;
@@ -61,6 +63,7 @@ public class BatteryService {
         this.batteryCsvUploadRepository = batteryCsvUploadRepository;
         this.batteryCsvService = batteryCsvService;
         this.batteryDataService = batteryDataService;
+        this.signalFilterService = signalFilterService;
     }
 
     /**
@@ -110,7 +113,8 @@ public class BatteryService {
         Page<Battery> page = batteryRepository.findAll(spec, pageable);
 
         // 3.1 从 Influx 获取最新电压/温度（按 cell_id）
-        Map<String, BatteryDataService.LatestVt> vtMap = batteryDataService.getLatestVoltageTemperatureByCellId();
+        Map<String, BatteryDataService.LatestVt> vtMap =
+                signalFilterService.smoothVtMap(batteryDataService.getLatestVoltageTemperatureByCellId());
 
         // 4.转成DTO
         List<BatteryListItemDto> dtoList = page.getContent().stream()
