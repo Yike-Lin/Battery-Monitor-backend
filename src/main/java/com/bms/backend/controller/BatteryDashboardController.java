@@ -42,6 +42,11 @@ public class BatteryDashboardController {
         return batteryDataService.getIcAnalysis(cellId, refCycle, currCycle, smooth == null ? 5 : smooth);
     }
 
+    /**
+     * 获取PACK 拓扑矩阵监控数据
+     * @param packId
+     * @return
+     */
     @GetMapping("/topology/snapshot")
     public TopologySnapshotDto getTopologySnapshot(
             @RequestParam(required = false) String packId
