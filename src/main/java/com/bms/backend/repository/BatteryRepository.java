@@ -11,6 +11,7 @@ public interface BatteryRepository
         extends JpaRepository<Battery, Long>, JpaSpecificationExecutor<Battery> {
 
     Battery findByBatteryCode(String batteryCode);
+    Battery findByBatteryCodeIgnoreCase(String batteryCode);
 
     // 用于新增时的校验编码唯一
     boolean existsByBatteryCode(String batteryCode);
