@@ -22,7 +22,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -56,6 +55,11 @@ public class SohAnnotationService {
         this.sohAnnotationRepository = sohAnnotationRepository;
     }
 
+    /**
+     * 创建 SOH 标注
+     * @param req 标注请求
+     * @return 创建的标注
+     */
     @Transactional
     public SohAnnotation create(SohAnnotationCreateRequest req) {
         if (req == null) throw new BusinessException("标注请求为空");
@@ -67,6 +71,7 @@ public class SohAnnotationService {
             throw new BusinessException("source 不能为空");
         }
 
+        // 1. 参数校验
         String batteryCode = req.getBatteryCode().trim();
         String batteryCodeKey = batteryCode.toLowerCase();
         String source = req.getSource().trim();
@@ -85,39 +90,14 @@ public class SohAnnotationService {
                 ? req.getModelVersion().trim()
                 : defaultModelVersion;
 
+        // 2. 并发控制：使用 ConcurrentHashMap 作为轻量级锁
         Object lock = LOCKS.computeIfAbsent(batteryCodeKey, k -> new Object());
         synchronized (lock) {
-            // 幂等去重：同电池+相同 soh/source/model 的重复请求（例如双击）直接复用最近一条
-            Optional<SohAnnotation> latestSameOpt = sohAnnotationRepository.findTopByBatteryCodeAndSohPercentAndSourceAndModelVersionOrderByCreatedAtDesc(
-                    batteryCode,
-                    normalizedSoh,
-                    source,
-                    modelVersion
-            );
-
-            long nowMs = OffsetDateTime.now().toInstant().toEpochMilli();
-            if (latestSameOpt.isPresent()) {
-                SohAnnotation existing = latestSameOpt.get();
-                if (existing.getCreatedAt() != null) {
-                    long ageMs = Math.abs(nowMs - existing.getCreatedAt().toInstant().toEpochMilli());
-                    if (ageMs <= idempotentWindowMs) {
-                        // 人情：如果用户补充了信息（note/annotatedBy/predicted），就把旧记录更新一下
-                        if (req.getNote() != null && !req.getNote().trim().isEmpty()) {
-                            existing.setNote(req.getNote());
-                        }
-                        if (req.getAnnotatedBy() != null && !req.getAnnotatedBy().trim().isEmpty()) {
-                            existing.setAnnotatedBy(req.getAnnotatedBy());
-                        }
-                        if (req.getPredictedSohPercent() != null) {
-                            existing.setPredictedSohPercent(req.getPredictedSohPercent());
-                            existing.setPredictedAt(OffsetDateTime.now());
-                        }
-                        return sohAnnotationRepository.save(existing);
-                    }
-                }
-            }
-
             Battery battery = batteryRepository.findByBatteryCode(batteryCode);
+            if (battery == null) {
+                // 兼容大小写不一致：避免前端/数据库编码差异导致“明明有电池但查不到”
+                battery = batteryRepository.findByBatteryCodeIgnoreCase(batteryCode);
+            }
             if (battery == null || Boolean.TRUE.equals(battery.getDeleted())) {
                 throw new BusinessException("电池不存在或已删除：batteryCode=" + batteryCode);
             }
@@ -150,7 +130,8 @@ public class SohAnnotationService {
      */
     public List<SohAnnotationListItemDto> listAll(int limit) {
         int safeLimit = limit <= 0 ? 200 : Math.min(limit, 2000);
-        Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.ASC, "createdAt"));
+        Sort sort = Sort.by(Sort.Direction.ASC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id"));
+        Pageable pageable = PageRequest.of(0, safeLimit, sort);
         Page<SohAnnotation> page = sohAnnotationRepository.findAll(pageable);
         return page.getContent().stream().map(this::toListItemDto).collect(Collectors.toList());
     }
