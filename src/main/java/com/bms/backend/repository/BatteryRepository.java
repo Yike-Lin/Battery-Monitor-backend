@@ -11,6 +11,7 @@ public interface BatteryRepository
         extends JpaRepository<Battery, Long>, JpaSpecificationExecutor<Battery> {
 
     Battery findByBatteryCode(String batteryCode);
+    // 用于兼容大小写不一致：避免前端/数据库编码差异导致有电池查不到
     Battery findByBatteryCodeIgnoreCase(String batteryCode);
 
     // 用于新增时的校验编码唯一
