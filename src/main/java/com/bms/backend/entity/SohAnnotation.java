@@ -6,6 +6,12 @@ import javax.persistence.*;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
+/**
+ * SohAnnotation 用于存储 SOH 标注信息
+ * @author 
+ * @version 1.0
+ * @since 2026-03-25
+ */
 @Entity
 @Table(name = "soh_annotation")
 @Data
@@ -38,22 +44,22 @@ public class SohAnnotation {
     @Column(name = "model_version", length = 128)
     private String modelVersion;
 
-    // 可选：记录当时 Python 模型文件路径/标识（如果有）
+    // 记录当时 Python 模型文件路径/标识（如果有）
     @Column(name = "model_path", length = 512)
     private String modelPath;
 
-    // 可选：保存标注前/当时的预测 SOH（便于误差分析）
+    // 保存标注前/当时的预测 SOH（便于误差分析）
     @Column(name = "predicted_soh_percent", precision = 5, scale = 2)
     private BigDecimal predictedSohPercent;
 
     @Column(name = "predicted_at", columnDefinition = "TIMESTAMPTZ")
     private OffsetDateTime predictedAt;
 
-    // 可选：标注人/系统
+    // 标注人/系统
     @Column(name = "annotated_by", length = 64)
     private String annotatedBy;
 
-    // 可选：备注
+    // 备注
     @Column(name = "note", length = 1024)
     private String note;
 
