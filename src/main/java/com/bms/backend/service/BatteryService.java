@@ -24,9 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.Set;
 import java.util.stream.Collectors;
 import javax.persistence.criteria.Predicate;
 import java.util.regex.Matcher;
@@ -110,11 +111,11 @@ public class BatteryService {
                 Sort.by(Sort.Direction.DESC , "lastRecordAt")
         );
 
-        // 3. Influx 与 DB 并行，缩短列表接口总耗时
-        CompletableFuture<Map<String, BatteryDataService.LatestVt>> vtFuture = CompletableFuture.supplyAsync(() ->
-                signalFilterService.smoothVtMap(batteryDataService.getLatestVoltageTemperatureByCellId()));
+        // 3. 先分页查库（含 model/customer，见 Repository @EntityGraph），再仅对当前页的 cell_id 查 Influx，避免全量 last()
         Page<Battery> page = batteryRepository.findAll(spec, pageable);
-        Map<String, BatteryDataService.LatestVt> vtMap = vtFuture.join();
+        Set<String> vtKeys = collectCellIdKeysForVt(page.getContent());
+        Map<String, BatteryDataService.LatestVt> vtMap = signalFilterService.smoothVtMap(
+                batteryDataService.getLatestVoltageTemperatureForCellIds(vtKeys));
 
         // 4.转成DTO
         List<BatteryListItemDto> dtoList = page.getContent().stream()
@@ -122,6 +123,26 @@ public class BatteryService {
                 .collect(Collectors.toList());
 
         return new PageImpl<>(dtoList , pageable , page.getTotalElements());
+    }
+
+    /** 当前页台账行对应的 Influx cell_id 候选（完整编码 + 提取的 b1cxx），均小写。 */
+    private Set<String> collectCellIdKeysForVt(List<Battery> batteries) {
+        Set<String> keys = new HashSet<>();
+        for (Battery b : batteries) {
+            String code = b.getBatteryCode();
+            if (code == null) {
+                continue;
+            }
+            String trimmed = code.trim();
+            if (!trimmed.isEmpty()) {
+                keys.add(trimmed.toLowerCase());
+            }
+            String cell = extractCellId(trimmed);
+            if (cell != null) {
+                keys.add(cell.toLowerCase());
+            }
+        }
+        return keys;
     }
 
     /**
