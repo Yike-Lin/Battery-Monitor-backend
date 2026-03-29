@@ -24,7 +24,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -304,6 +306,21 @@ public class BatteryDataService {
      */
     public Map<String, LatestVt> getLatestVoltageTemperatureByCellId() {
         Map<String, LatestVtc> vtc = getLatestVtcByCellId();
+        return latestVtcMapToVt(vtc);
+    }
+
+    /**
+     * 仅查询给定 cell_id 集合的最新电压/温度（用于台账分页，避免全表 last()）。
+     */
+    public Map<String, LatestVt> getLatestVoltageTemperatureForCellIds(Set<String> cellIds) {
+        if (cellIds == null || cellIds.isEmpty()) {
+            return new HashMap<>();
+        }
+        Map<String, LatestVtc> vtc = fetchLatestVtcMapFromInfluxForCellIds(cellIds);
+        return latestVtcMapToVt(vtc);
+    }
+
+    private static Map<String, LatestVt> latestVtcMapToVt(Map<String, LatestVtc> vtc) {
         Map<String, LatestVt> map = new HashMap<>(Math.max(16, vtc.size() * 2));
         for (Map.Entry<String, LatestVtc> e : vtc.entrySet()) {
             LatestVtc z = e.getValue();
@@ -336,17 +353,70 @@ public class BatteryDataService {
     }
 
     private Map<String, LatestVtc> fetchLatestVtcMapFromInflux() {
+        return fetchLatestVtcMapFromInfluxWithOptionalCellFilter(null);
+    }
+
+    /**
+     * 仅拉取指定 cell_id 的最新点；集合过大时退回全量查询后在内存按 key 过滤（仍走缓存）。
+     */
+    private static final int MAX_CELL_IDS_FOR_DIRECT_INFLUX_FILTER = 200;
+
+    private Map<String, LatestVtc> fetchLatestVtcMapFromInfluxForCellIds(Set<String> cellIds) {
+        if (cellIds == null || cellIds.isEmpty()) {
+            return new HashMap<>();
+        }
+        if (cellIds.size() > MAX_CELL_IDS_FOR_DIRECT_INFLUX_FILTER) {
+            Map<String, LatestVtc> full = getLatestVtcByCellId();
+            Map<String, LatestVtc> sub = new HashMap<>();
+            for (String id : cellIds) {
+                if (id == null) {
+                    continue;
+                }
+                LatestVtc v = full.get(id.toLowerCase());
+                if (v != null) {
+                    sub.put(id.toLowerCase(), v);
+                }
+            }
+            return sub;
+        }
+        return fetchLatestVtcMapFromInfluxWithOptionalCellFilter(cellIds);
+    }
+
+    /**
+     * @param cellIdFilter null 表示不过滤 cell（全量）；非空则 Influx 侧按正则限定 cell_id，显著减轻列表场景负载。
+     */
+    private Map<String, LatestVtc> fetchLatestVtcMapFromInfluxWithOptionalCellFilter(Set<String> cellIdFilter) {
         Map<String, LatestVtc> map = new HashMap<>();
+        String cellIdClause = "";
+        if (cellIdFilter != null && !cellIdFilter.isEmpty()) {
+            String inner = cellIdFilter.stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .map(Pattern::quote)
+                    .distinct()
+                    .collect(Collectors.joining("|"));
+            if (!inner.isEmpty()) {
+                // (?i) 与台账/Influx tag 大小写混用兼容；inner 为 \Qid\E|\Qid2\E 交替
+                cellIdClause = String.format(
+                        "|> filter(fn: (r) => r[\"cell_id\"] =~ /^(?i)(?:%s)$/) ",
+                        inner
+                );
+            }
+        }
+
         String query = String.format(
                 "from(bucket: \"%s\") " +
                         "|> range(start: %s) " +
                         "|> filter(fn: (r) => r[\"_measurement\"] == \"battery_metrics\") " +
                         "|> filter(fn: (r) => r[\"_field\"] == \"voltage\" or r[\"_field\"] == \"temperature\" or r[\"_field\"] == \"current\") " +
+                        "%s" +
                         "|> group(columns: [\"cell_id\", \"_field\"]) " +
                         "|> last() " +
                         "|> keep(columns: [\"cell_id\", \"_field\", \"_value\", \"_time\"])",
                 bucket,
-                influxLatestRange
+                influxLatestRange,
+                cellIdClause
         );
 
         try {
