@@ -1,6 +1,10 @@
 package com.bms.backend.repository;
 
 import com.bms.backend.entity.Battery;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
@@ -9,6 +13,11 @@ import java.util.List;
 
 public interface BatteryRepository
         extends JpaRepository<Battery, Long>, JpaSpecificationExecutor<Battery> {
+
+    /** 台账列表：一次查出 model/customer，避免 N+1 */
+    @Override
+    @EntityGraph(attributePaths = {"model", "customer"})
+    Page<Battery> findAll(Specification<Battery> spec, Pageable pageable);
 
     Battery findByBatteryCode(String batteryCode);
     // 用于兼容大小写不一致：避免前端/数据库编码差异导致有电池查不到
