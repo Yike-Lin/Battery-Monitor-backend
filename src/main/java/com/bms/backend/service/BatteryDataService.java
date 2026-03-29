@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -393,11 +392,11 @@ public class BatteryDataService {
                     .filter(Objects::nonNull)
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())
-                    .map(Pattern::quote)
+                    .map(BatteryDataService::escapeRe2Literal)
                     .distinct()
                     .collect(Collectors.joining("|"));
             if (!inner.isEmpty()) {
-                // (?i) 与台账/Influx tag 大小写混用兼容；inner 为 \Qid\E|\Qid2\E 交替
+                // (?i) 与台账/Influx tag 大小写混用兼容；inner 为 RE2 字面量（非 Java \Q...\E，Influx 不支持）
                 cellIdClause = String.format(
                         "|> filter(fn: (r) => r[\"cell_id\"] =~ /^(?i)(?:%s)$/) ",
                         inner
@@ -445,6 +444,39 @@ public class BatteryDataService {
             log.error("❌ 查询 InfluxDB 最新 voltage/temperature/current 失败: {}", e.getMessage());
         }
         return map;
+    }
+
+    /**
+     * Influx Flux 正则使用 RE2，不支持 Java {@code Pattern.quote} 的 {@code \Q...\E}。
+     * 将字符串按字面量匹配时，对 RE2 元字符做转义。
+     */
+    private static String escapeRe2Literal(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 8);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\':
+                case '.':
+                case '+':
+                case '*':
+                case '?':
+                case '(':
+                case ')':
+                case '|':
+                case '[':
+                case ']':
+                case '{':
+                case '}':
+                case '^':
+                case '$':
+                    sb.append('\\');
+                    break;
+                default:
+                    break;
+            }
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
     // 辅安全转 Double
